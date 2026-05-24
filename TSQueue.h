@@ -24,7 +24,7 @@ class TSQueue {
    }
    std::optional< T > try_front() const {
       std::lock_guard< std::mutex > lk( mutex_ );
-      return queue_.empty() ? std::nullopt : queue_.front();
+      return queue_.empty() ? std::nullopt : std::optional< T >( queue_.front() );
    }
    std::size_t size() const {
       std::lock_guard< std::mutex > lk( mutex_ );

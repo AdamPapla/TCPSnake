@@ -1,5 +1,4 @@
 #pragma once
-#include <cassert>
 #include <concepts>
 #include <cstdint>
 #include <cstring>
@@ -7,13 +6,10 @@
 #include <span>
 #include <stdexcept>
 #include <type_traits>
-#include <vector>
 
 #include "GameState.h"
 
 namespace Serdes {
-
-using namespace GameState;
 
 template < typename T >
 concept TriviallySerializable =
@@ -23,14 +19,12 @@ struct BytesCounter {
    std::size_t count{ 0 };
 
    template < TriviallySerializable T >
-   bool write( const T & ) {
+   void write( const T & ) {
       count += sizeof( T );
-      return true;
    }
    template < TriviallySerializable T >
-   bool writeBytes( const T *const, const std::size_t size ) {
+   void writeBytes( const T *const, const std::size_t size ) {
       count += size * sizeof( T );
-      return true;
    }
 };
 
@@ -40,25 +34,23 @@ class BytesWriter {
        : bytes_{ bytes }, remBytes_{ bytes_.size() } {}
 
    template < TriviallySerializable T >
-   [[nodiscard]] bool write( const T & val ) {
+   void write( const T & val ) {
       if ( remBytes_ < sizeof( T ) ) {
-         return false;
+         throw std::runtime_error( "BytesWriter overflow" );
       }
       std::size_t currentIdx = bytes_.size() - remBytes_;
       std::memcpy( bytes_.data() + currentIdx, &val, sizeof( T ) );
       remBytes_ -= sizeof( T );
-      return true;
    }
    template < TriviallySerializable T >
-   [[nodiscard]] bool writeBytes( const T *const data, const std::size_t size ) {
+   void writeBytes( const T *const data, const std::size_t size ) {
       std::size_t currentIdx = bytes_.size() - remBytes_;
       std::size_t writeSize = size * sizeof( T );
       if ( remBytes_ < writeSize ) {
-         return false;
+         throw std::runtime_error( "BytesWriter overflow" );
       }
       std::memcpy( bytes_.data() + currentIdx, data, writeSize );
       remBytes_ -= writeSize;
-      return true;
    }
 
    std::size_t remainingBytes() { return remBytes_; }
@@ -74,7 +66,7 @@ struct BytesReader {
        : bytes_{ bytes }, remBytes_{ bytes.size() } {}
 
    template < TriviallySerializable T >
-   std::optional< T > peek() {
+   std::optional< T > try_peek() {
       T val;
       if ( remBytes_ < sizeof( T ) ) {
          return std::nullopt;
@@ -84,21 +76,34 @@ struct BytesReader {
       return val;
    }
    template < TriviallySerializable T >
-   std::optional< T > read() {
-      auto val = peek< T >();
-      advance( sizeof( T ) );
+   T peek() {
+      auto val = try_peek<T>();
+      if ( !val ) throw std::runtime_error("BytesReader underflow");
+      return val.value();
+   }
+   template< TriviallySerializable T >
+   std::optional< T > try_read() {
+      auto val = try_peek< T >();
+      if ( val ) {
+         remBytes_ -= sizeof( T );
+      }
       return val;
    }
    template < TriviallySerializable T >
-   bool readBytes( std::span< T > dest ) {
+   T read() {
+      auto res = try_read< T >();
+      if ( !res ) throw std::runtime_error( "BytesReader underflow" );
+      return res.value();
+   }
+   template < TriviallySerializable T >
+   void readBytes( std::span< T > dest ) {
       std::size_t writeSize = dest.size_bytes();
       if ( remBytes_ < writeSize ) {
-         return false;
+         throw std::runtime_error( "BytesReader underflow" );
       }
       std::size_t currentIdx = bytes_.size() - remBytes_;
       std::memcpy( dest.data(), bytes_.data() + currentIdx, writeSize );
-      advance( writeSize );
-      return true;
+      remBytes_ -= writeSize;
    }
 
    void advance( std::size_t len ) { remBytes_ -= len; }

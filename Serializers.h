@@ -14,171 +14,121 @@ using namespace Message;
 // Keeping these generic and instantiating with BytesCounter or BytesWriter prevents
 // our size calculation and serialization going out of sync
 template < typename BytesOp >
-bool
+void
 write( const RegisterMessage & msg, BytesOp & bytesOp ) {
-   bool success = bytesOp.write( msg.msgType );
-   success &= bytesOp.write( msg.existingClientId );
-   success &= bytesOp.write( msg.nameLen );
-   success &= bytesOp.writeBytes( msg.name.data(), msg.nameLen );
-   return success;
+   bytesOp.write( msg.msgType );
+   bytesOp.write( msg.existingClientId );
+   bytesOp.write( msg.nameLen );
+   bytesOp.writeBytes( msg.name.data(), msg.nameLen );
 }
 
-inline bool
+inline void
 read( RegisterMessage & msg, BytesReader & reader ) {
-   auto msgType = reader.read< ClientMessageType >();
-   auto id = reader.read< ClientId >();
+   msg.msgType = reader.read< ClientMessageType >();
+   msg.existingClientId = reader.read< ClientId >();
    using NameLen = decltype( RegisterMessage::nameLen );
-   auto nameLen = reader.read< NameLen >();
-   if ( msgType && id && nameLen ) {
-      msg.msgType = msgType.value();
-      msg.existingClientId = id.value();
-      msg.nameLen = nameLen.value();
-      msg.name.resize( msg.nameLen );
-      return reader.readBytes< char >( msg.name );
-   }
-   return false;
+   msg.nameLen = reader.read< NameLen >();
+   msg.name.resize( msg.nameLen );
+   reader.readBytes< char >( msg.name );
 }
 
 template < typename BytesOp >
-bool
+void
 write( const JoinMessage msg, BytesOp & bytesOp ) {
-   bool success = bytesOp.write( msg.msgType );
-   success &= bytesOp.write( msg.roomId );
-   return success;
+   bytesOp.write( msg.msgType );
+   bytesOp.write( msg.roomId );
 }
 
-inline bool
+inline void
 read( JoinMessage & msg, BytesReader & reader ) {
-   auto msgType = reader.read< ClientMessageType >();
-   auto roomId = reader.read< std::uint32_t >();
-   if ( msgType && roomId ) {
-      msg = { { msgType.value() }, roomId.value() };
-      return true;
-   }
-   return false;
+   msg.msgType = reader.read< ClientMessageType >();
+   msg.roomId = reader.read< std::uint32_t >();
 }
 
 template < typename BytesOp >
-bool
+void
 write( const ChangeDirMessage msg, BytesOp & bytesOp ) {
-   bool success = bytesOp.write( msg.msgType );
-   success &= bytesOp.write( msg.newDir );
-   return success;
+   bytesOp.write( msg.msgType );
+   bytesOp.write( msg.newDir );
 }
 
-inline bool
+inline void
 read( ChangeDirMessage & msg, BytesReader & reader ) {
-   auto msgType = reader.read< ClientMessageType >();
-   auto newDir = reader.read< Move >();
-   if ( msgType && newDir ) {
-      msg = { { msgType.value() }, newDir.value() };
-      return true;
-   }
-   return false;
+   msg.msgType = reader.read< ClientMessageType >();
+   msg.newDir = reader.read< Move >();
 }
 
 template < typename BytesOp >
-bool
+void
 write( const LeaveMessage msg, BytesOp & bytesOp ) {
-   bool success = bytesOp.write( msg.msgType );
-   return success;
+   bytesOp.write( msg.msgType );
 }
 
-inline bool
+inline void
 read( LeaveMessage & msg, BytesReader & reader ) {
-   auto msgType = reader.read< ClientMessageType >();
-   if ( msgType ) {
-      msg = { { msgType.value() } };
-      return true;
-   }
-   return false;
+   msg.msgType = reader.read< ClientMessageType >();
 }
 
 template < typename BytesOp >
-bool
+void
 write( const AckMessage msg, BytesOp & bytesOp ) {
-   bool success = bytesOp.write( msg.msgType );
-   success &= bytesOp.write( msg.id );
-   success &= bytesOp.write( msg.reason );
-   return success;
+   bytesOp.write( msg.msgType );
+   bytesOp.write( msg.id );
+   bytesOp.write( msg.reason );
 }
 
-inline bool
+inline void
 read( AckMessage & ack, BytesReader & reader ) {
-   auto msgType = reader.read< ServerMessageType >();
-   auto id = reader.read< ClientId >();
-   auto nackReason = reader.read< NackReason >();
-   if ( id && nackReason ) {
-      ack = { { .msgType = msgType.value() }, id.value(), nackReason.value() };
-      return true;
-   }
-   return false;
+   ack.msgType = reader.read< ServerMessageType >();
+   ack.id = reader.read< ClientId >();
+   ack.reason = reader.read< NackReason >();
 }
 
 template < typename BytesOp >
-bool
+void
 write( const DisconnectMessage & msg, BytesOp & bytesOp ) {
-   bool success = bytesOp.write( msg.msgType );
-   success &= bytesOp.write( msg.reasonLen );
-   success &= bytesOp.writeBytes( msg.reason.data(), msg.reasonLen );
-   return success;
+   bytesOp.write( msg.msgType );
+   bytesOp.write( msg.reasonLen );
+   bytesOp.writeBytes( msg.reason.data(), msg.reasonLen );
 }
 
-inline bool
+inline void
 read( DisconnectMessage & msg, BytesReader & reader ) {
    using MsgLen = decltype( DisconnectMessage::reasonLen );
-   auto msgType = reader.read< ServerMessageType >();
-   auto len = reader.read< MsgLen >();
-   if ( len && msgType ) {
-      msg.msgType = msgType.value();
-      msg.reasonLen = len.value();
-      msg.reason.resize( msg.reasonLen );
-      return reader.readBytes< char >( msg.reason );
-   }
-   return false;
+   msg.msgType = reader.read< ServerMessageType >();
+   msg.reasonLen = reader.read< MsgLen >();
+   msg.reason.resize( msg.reasonLen );
+   reader.readBytes< char >( msg.reason );
 }
 
 template < typename BytesOp >
-bool
+void
 write( const DeathMessage msg, BytesOp & bytesOp ) {
-   bool success = bytesOp.write( msg.msgType );
-   success &= bytesOp.write( msg.score );
-   return success;
+   bytesOp.write( msg.msgType );
+   bytesOp.write( msg.score );
 }
 
-inline bool
+inline void
 read( DeathMessage & msg, BytesReader & reader ) {
-   auto msgType = reader.read< ServerMessageType >();
-   auto score = reader.read< uint32_t >();
-   if ( msgType && score ) {
-      msg.msgType = msgType.value();
-      msg.score = score.value();
-      return true;
-   }
-   return false;
+   msg.msgType = reader.read< ServerMessageType >();
+   msg.score = reader.read< uint32_t >();
 }
 
 template < typename BytesOp >
-bool
+void
 write( const SnapshotMessage & msg, BytesOp & bytesOp ) {
-   bool success = bytesOp.write( msg.msgType );
-   success &= bytesOp.write( msg.snapshotLen );
-   success &= bytesOp.writeBytes( msg.bytes.data(), msg.snapshotLen );
-   return success;
+   bytesOp.write( msg.msgType );
+   bytesOp.write( msg.snapshotLen );
+   bytesOp.writeBytes( msg.bytes.data(), msg.snapshotLen );
 }
 
-inline bool
+inline void
 read( SnapshotMessage & msg, BytesReader & reader ) {
    using MsgLen = decltype( SnapshotMessage::snapshotLen );
-   auto msgType = reader.read< ServerMessageType >();
-   auto len = reader.read< MsgLen >();
-   if ( msgType && len ) {
-      msg.msgType = msgType.value();
-      msg.snapshotLen = len.value();
-      msg.bytes.resize( msg.snapshotLen );
-      return reader.readBytes< std::uint8_t >( msg.bytes );
-   }
-   return false;
+   msg.msgType = reader.read< ServerMessageType >();
+   msg.snapshotLen = reader.read< MsgLen >();
+   msg.bytes.resize( msg.snapshotLen );
+   reader.readBytes< std::uint8_t >( msg.bytes );
 }
 
 } // namespace Serdes

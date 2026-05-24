@@ -15,17 +15,16 @@ narrow_size( const std::vector< T > & vec ) {
 // another to write to it. Keep them coupled to avoid a mismatch between fields
 // counted and fields written
 template < typename BytesOperator >
-bool
+void
 serialize( const Snapshot & snapshot, BytesOperator & writer ) {
-   bool success = writer.write( narrow_size( snapshot.snakes ) );
+   writer.write( narrow_size( snapshot.snakes ) );
    for ( auto & snake : snapshot.snakes ) {
-      success &= writer.write( snake.id );
-      success &= writer.write( narrow_size( snake.blocks ) );
-      success &= writer.writeBytes( snake.blocks.data(), snake.blocks.size() );
+      writer.write( snake.id );
+      writer.write( narrow_size( snake.blocks ) );
+      writer.writeBytes( snake.blocks.data(), snake.blocks.size() );
    }
-   success &= writer.write( narrow_size( snapshot.food ) );
-   success &= writer.writeBytes( snapshot.food.data(), snapshot.food.size() );
-   return success;
+   writer.write( narrow_size( snapshot.food ) );
+   writer.writeBytes( snapshot.food.data(), snapshot.food.size() );
 }
 
 } // namespace
@@ -51,17 +50,17 @@ writeSnapshot( const Snapshot & snapshot ) {
 Snapshot
 readSnapshot( BytesReader & reader ) {
    Snapshot snapshot;
-   auto numSnakes = reader.read< std::uint16_t >().value();
+   auto numSnakes = reader.read< std::uint16_t >();
    snapshot.snakes.resize( numSnakes );
    for ( uint16_t i = 0; i < numSnakes; ++i ) {
       SnakeSnapshot snake;
-      snake.id = reader.read< ClientId >().value();
-      auto numBlocks = reader.read< std::uint16_t >().value();
+      snake.id = reader.read< ClientId >();
+      auto numBlocks = reader.read< std::uint16_t >();
       snake.blocks.resize( numBlocks );
       reader.readBytes< Coord >( snake.blocks );
       snapshot.snakes[ i ] = std::move( snake );
    }
-   auto numFood = reader.read< std::uint16_t >().value();
+   auto numFood = reader.read< std::uint16_t >();
    snapshot.food.resize( numFood );
    reader.readBytes< Coord >( snapshot.food );
 

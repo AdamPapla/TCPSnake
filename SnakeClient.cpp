@@ -5,21 +5,22 @@ namespace Network {
 namespace {
 
 template < typename T >
-std::optional< T >
+T
 readAs( Serdes::BytesReader & reader ) {
    T msg;
-   if ( read( msg, reader ) )
-      return msg;
-   return std::nullopt;
+   Serdes::read( msg, reader );
+   return msg;
 }
 
 std::optional< Message::ServerMessage >
 readNext( Serdes::BytesReader & reader ) {
    using namespace Message;
-   auto msgType = reader.peek< Message::ServerMessageType >();
-   if ( !msgType.has_value() )
+   auto msgLen = reader.try_read< std::uint32_t >();
+   if ( msgLen ||  reader.remainingBytes() < msgLen.value() ) {
       return std::nullopt;
-   switch ( msgType.value() ) {
+   }
+   auto msgType = reader.peek< Message::ServerMessageType >();
+   switch ( msgType ) {
    case ServerMessageType::REGISTER_ACK:
    case ServerMessageType::JOIN_ACK:
    case ServerMessageType::CHANGE_DIR_ACK:
@@ -33,6 +34,7 @@ readNext( Serdes::BytesReader & reader ) {
       return readAs< DeathMessage >( reader );
       return std::nullopt;
    }
+   return std::nullopt;
 }
 
 } // namespace
@@ -94,18 +96,24 @@ SnakeClient::queueOutgoing() {
    Serdes::BytesWriter writer{ std::span< uint8_t >(
        egressBuff_.begin() + writeOffset_, egressBuff_.end() ) };
    bool bufferFull = writeOffset_ != buffSize_;
-   while ( !stop_.stop_requested() && !bufferFull ) {
+   while ( !stop_.stop_requested() ) {
       auto outbound = egressQueue_.try_front();
       if ( !outbound.has_value() )
          break;
       Serdes::BytesCounter counter;
-      std::visit( [ & ]( const auto & msg ) { Serdes::write( msg, counter ); },
-                  outbound.value() );
-      bufferFull = counter.count > writer.remainingBytes();
-      if ( bufferFull )
-         break;
-      std::visit( [ & ]( const auto & msg ) { Serdes::write( msg, writer ); },
-                  outbound.value() );
+      bufferFull = std::visit(
+          [ & ]( const auto & msg ) {
+             Serdes::write( msg, counter );
+             // Bail early if we don't have space to write length + payload
+             bufferFull =
+                 sizeof( counter.count ) + counter.count > writer.remainingBytes();
+             if ( bufferFull )
+                return false;
+             writer.write( counter.count );
+             Serdes::write( msg, writer );
+             return true;
+          },
+          outbound.value() );
       egressQueue_.pop();
       writeOffset_ = buffSize_ - writer.remainingBytes();
    }
@@ -125,7 +133,7 @@ SnakeClient::sendFromBuffer() {
    }
 }
 
-// TODO: Rung buffers will remove the need for this shrinking
+// TODO: Ring buffers will remove the need for this shrinking
 void
 SnakeClient::maybeCompactAccumulator() {
    if ( accumulator_.size() > buffSize_ / 2 ) {
