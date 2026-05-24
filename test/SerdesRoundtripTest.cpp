@@ -1,128 +1,230 @@
-// SerdesTest.cpp
-
+#include <cstdint>
 #include <gtest/gtest.h>
+#include <span>
+#include <vector>
 
-#include "../Messages.h"
-#include "../Serdes.h"
+#include "BytesOperator.h"
+#include "Messages.h"
+#include "Serializers.h"
 
-using namespace GameState;
-using namespace Serdes;
+// Serialize a message to bytes then deserialize back, returning a reader over the
+// buffer. The caller holds the buffer and passes the reader to their read() call.
+template < typename Msg >
+std::pair< std::vector< std::uint8_t >, Serdes::BytesReader >
+makeRoundtrip( const Msg & msg ) {
+   Serdes::BytesCounter counter;
+   Serdes::write( msg, counter );
 
-namespace {
+   std::vector< std::uint8_t > buf( counter.count );
+   Serdes::BytesWriter writer{ std::span< std::uint8_t >{ buf } };
+   Serdes::write( msg, writer );
 
-bool
-coordEqual( const Coord & a, const Coord & b ) {
-   return a[ 0 ] == b[ 0 ] && a[ 1 ] == b[ 1 ];
+   Serdes::BytesReader reader{ std::span< std::uint8_t >{ buf } };
+   return { std::move( buf ), reader };
 }
 
-bool
-snakeEqual( const SnakeSnapshot & a, const SnakeSnapshot & b ) {
-   if ( a.id != b.id )
-      return false;
-   if ( a.blocks.size() != b.blocks.size() )
-      return false;
+// ---------------------------------------------------------------------------
+// Client messages
+// ---------------------------------------------------------------------------
 
-   for ( size_t i = 0; i < a.blocks.size(); ++i ) {
-      if ( !coordEqual( a.blocks[ i ], b.blocks[ i ] ) )
-         return false;
+TEST( SerdesRoundtrip, RegisterMessage ) {
+   Message::RegisterMessage original;
+   original.msgType = Message::ClientMessageType::REGISTER;
+   original.existingClientId = 42;
+   original.nameLen = 5;
+   original.name = "Alice";
+
+   auto [ buf, reader ] = makeRoundtrip( original );
+
+   Message::RegisterMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.msgType, original.msgType );
+   EXPECT_EQ( result.existingClientId, original.existingClientId );
+   EXPECT_EQ( result.nameLen, original.nameLen );
+   EXPECT_EQ( result.name, original.name );
+}
+
+TEST( SerdesRoundtrip, RegisterMessageNoExistingId ) {
+   Message::RegisterMessage original;
+   original.msgType = Message::ClientMessageType::REGISTER;
+   original.existingClientId = 0;
+   original.nameLen = 3;
+   original.name = "Bob";
+
+   auto [ buf, reader ] = makeRoundtrip( original );
+
+   Message::RegisterMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.existingClientId, 0 );
+   EXPECT_EQ( result.name, "Bob" );
+}
+
+TEST( SerdesRoundtrip, JoinMessage ) {
+   Message::JoinMessage original;
+   original.msgType = Message::ClientMessageType::JOIN;
+   original.roomId = 99999;
+
+   auto [ buf, reader ] = makeRoundtrip( original );
+
+   Message::JoinMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.msgType, original.msgType );
+   EXPECT_EQ( result.roomId, original.roomId );
+}
+
+TEST( SerdesRoundtrip, ChangeDirMessage ) {
+   for ( const auto dir :
+         { Move::left, Move::right, Move::up, Move::down, Move::stay } ) {
+      Message::ChangeDirMessage original;
+      original.msgType = Message::ClientMessageType::CHANGE_DIR;
+      original.newDir = dir;
+
+      auto [ buf, reader ] = makeRoundtrip( original );
+
+      Message::ChangeDirMessage result;
+      Serdes::read( result, reader );
+      EXPECT_EQ( result.msgType, original.msgType );
+      EXPECT_EQ( result.newDir, dir );
    }
-   return true;
 }
 
-bool
-snapshotEqual( const Snapshot & a, const Snapshot & b ) {
-   if ( a.snakes.size() != b.snakes.size() )
-      return false;
-   if ( a.food.size() != b.food.size() )
-      return false;
+TEST( SerdesRoundtrip, LeaveMessage ) {
+   Message::LeaveMessage original;
+   original.msgType = Message::ClientMessageType::LEAVE;
 
-   for ( size_t i = 0; i < a.snakes.size(); ++i ) {
-      if ( !snakeEqual( a.snakes[ i ], b.snakes[ i ] ) )
-         return false;
+   auto [ buf, reader ] = makeRoundtrip( original );
+
+   Message::LeaveMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.msgType, original.msgType );
+}
+
+// ---------------------------------------------------------------------------
+// Server messages
+// ---------------------------------------------------------------------------
+
+TEST( SerdesRoundtrip, AckMessage ) {
+   for ( const auto type : {
+             Message::ServerMessageType::REGISTER_ACK,
+             Message::ServerMessageType::JOIN_ACK,
+             Message::ServerMessageType::CHANGE_DIR_ACK,
+             Message::ServerMessageType::LEAVE_ACK,
+         } ) {
+      Message::AckMessage original;
+      original.msgType = type;
+      original.id = 7;
+      original.reason = Message::NackReason::UNSET;
+
+      auto [ buf, reader ] = makeRoundtrip( original );
+
+      Message::AckMessage result;
+      Serdes::read( result, reader );
+      EXPECT_EQ( result.msgType, original.msgType );
+      EXPECT_EQ( result.id, original.id );
+      EXPECT_EQ( result.reason, original.reason );
    }
-
-   for ( size_t i = 0; i < a.food.size(); ++i ) {
-      if ( !coordEqual( a.food[ i ], b.food[ i ] ) )
-         return false;
-   }
-
-   return true;
 }
 
-Coord
-makeCoord( std::uint32_t x, std::uint32_t y ) {
-   Coord c{};
-   c[ 0 ] = x;
-   c[ 1 ] = y;
-   return c;
+TEST( SerdesRoundtrip, DisconnectMessage ) {
+   Message::DisconnectMessage original;
+   original.msgType = Message::ServerMessageType::DISCONNECT;
+   original.reason = "Server shutting down";
+   original.reasonLen = static_cast< std::uint16_t >( original.reason.size() );
+
+   auto [ buf, reader ] = makeRoundtrip( original );
+
+   Message::DisconnectMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.msgType, original.msgType );
+   EXPECT_EQ( result.reasonLen, original.reasonLen );
+   EXPECT_EQ( result.reason, original.reason );
 }
 
-SnakeSnapshot
-makeSnake( ClientId id, std::initializer_list< Coord > blocks ) {
-   SnakeSnapshot s{};
-   s.id = id;
-   s.blocks = blocks;
-   return s;
+TEST( SerdesRoundtrip, DisconnectMessageEmptyReason ) {
+   Message::DisconnectMessage original;
+   original.msgType = Message::ServerMessageType::DISCONNECT;
+   original.reason = "";
+   original.reasonLen = 0;
+
+   auto [ buf, reader ] = makeRoundtrip( original );
+
+   Message::DisconnectMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.reasonLen, 0 );
+   EXPECT_EQ( result.reason, "" );
 }
 
-} // namespace
+TEST( SerdesRoundtrip, DeathMessage ) {
+   Message::DeathMessage original;
+   original.msgType = Message::ServerMessageType::DEATH;
+   original.score = 1337;
 
-TEST( SerdesRoundTrip, EmptySnapshot ) {
-   Snapshot original{};
+   auto [ buf, reader ] = makeRoundtrip( original );
 
-   auto bytes = writeSnapshot( original );
-   BytesReader reader( bytes );
-   Snapshot decoded = readSnapshot( reader );
-
-   EXPECT_TRUE( snapshotEqual( original, decoded ) );
+   Message::DeathMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.msgType, original.msgType );
+   EXPECT_EQ( result.score, original.score );
 }
 
-TEST( SerdesRoundTrip, SingleSnakeNoFood ) {
-   Snapshot original;
+TEST( SerdesRoundtrip, SnapshotMessage ) {
+   Message::SnapshotMessage original;
+   original.msgType = Message::ServerMessageType::SNAPSHOT;
+   original.bytes = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02 };
+   original.snapshotLen = static_cast< std::uint32_t >( original.bytes.size() );
 
-   original.snakes.push_back(
-       makeSnake( 1, { makeCoord( 1, 1 ), makeCoord( 1, 2 ), makeCoord( 1, 3 ) } ) );
+   auto [ buf, reader ] = makeRoundtrip( original );
 
-   auto bytes = writeSnapshot( original );
-   BytesReader reader( bytes );
-   Snapshot decoded = readSnapshot( reader );
-
-   EXPECT_TRUE( snapshotEqual( original, decoded ) );
+   Message::SnapshotMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.msgType, original.msgType );
+   EXPECT_EQ( result.snapshotLen, original.snapshotLen );
+   EXPECT_EQ( result.bytes, original.bytes );
 }
 
-TEST( SerdesRoundTrip, MultipleSnakesAndFood ) {
-   Snapshot original;
+TEST( SerdesRoundtrip, SnapshotMessageEmpty ) {
+   Message::SnapshotMessage original;
+   original.msgType = Message::ServerMessageType::SNAPSHOT;
+   original.bytes = {};
+   original.snapshotLen = 0;
 
-   original.snakes.push_back(
-       makeSnake( 1, { makeCoord( 0, 0 ), makeCoord( 0, 1 ), makeCoord( 0, 2 ) } ) );
+   auto [ buf, reader ] = makeRoundtrip( original );
 
-   original.snakes.push_back(
-       makeSnake( 2, { makeCoord( 5, 5 ), makeCoord( 5, 6 ) } ) );
-
-   original.food = { makeCoord( 10, 10 ), makeCoord( 3, 7 ), makeCoord( 8, 2 ) };
-
-   auto bytes = writeSnapshot( original );
-   BytesReader reader( bytes );
-   Snapshot decoded = readSnapshot( reader );
-
-   EXPECT_TRUE( snapshotEqual( original, decoded ) );
+   Message::SnapshotMessage result;
+   Serdes::read( result, reader );
+   EXPECT_EQ( result.snapshotLen, 0 );
+   EXPECT_TRUE( result.bytes.empty() );
 }
 
-TEST( SerdesRoundTrip, LargeSnake ) {
-   Snapshot original;
+// ---------------------------------------------------------------------------
+// BytesOperator contract tests
+// ---------------------------------------------------------------------------
 
-   SnakeSnapshot snake{};
-   snake.id = 42;
+TEST( BytesOperator, WriterThrowsOnOverflow ) {
+   std::vector< std::uint8_t > buf( 1 );
+   Serdes::BytesWriter writer{ std::span< std::uint8_t >{ buf } };
+   EXPECT_THROW( writer.write( std::uint32_t{ 42 } ), std::runtime_error );
+}
 
-   for ( uint32_t i = 0; i < 100; ++i ) {
-      snake.blocks.push_back( makeCoord( i, i + 1 ) );
-   }
+TEST( BytesOperator, ReaderThrowsOnUnderflow ) {
+   std::vector< std::uint8_t > buf( 1 );
+   Serdes::BytesReader reader{ std::span< std::uint8_t >{ buf } };
+   EXPECT_THROW( reader.read< std::uint32_t >(), std::runtime_error );
+}
 
-   original.snakes.push_back( snake );
+TEST( BytesOperator, CounterMatchesWriterConsumption ) {
+   Message::RegisterMessage msg;
+   msg.msgType = Message::ClientMessageType::REGISTER;
+   msg.existingClientId = 1;
+   msg.nameLen = 4;
+   msg.name = "Test";
 
-   auto bytes = writeSnapshot( original );
-   BytesReader reader( bytes );
-   Snapshot decoded = readSnapshot( reader );
+   Serdes::BytesCounter counter;
+   Serdes::write( msg, counter );
 
-   EXPECT_TRUE( snapshotEqual( original, decoded ) );
+   std::vector< std::uint8_t > buf( counter.count );
+   Serdes::BytesWriter writer{ std::span< std::uint8_t >{ buf } };
+   Serdes::write( msg, writer );
+
+   EXPECT_EQ( writer.remainingBytes(), 0u );
 }
