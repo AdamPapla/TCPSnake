@@ -49,7 +49,7 @@ SnakeClient::connect( std::string_view serverAddr, std::uint16_t port ) {
    inet_pton( AF_INET, serverAddr.data(), &server.sin_addr );
    server.sin_port = htons( port );
    return ::connect(
-       sock_, reinterpret_cast< sockaddr * >( &server ), sizeof( server ) );
+       sock_, reinterpret_cast< sockaddr * >( &server ), sizeof( server ) ) == 0;
 }
 
 void

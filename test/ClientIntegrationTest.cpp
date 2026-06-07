@@ -13,8 +13,9 @@
 class FakeSnakeServer {
  public:
    FakeSnakeServer( std::vector< Message::ServerMessage > messages,
-                    std::promise< std::uint16_t > promise )
-       : messages_{ std::move( messages ) }, portPromise_{ std::move( promise ) } {
+                    std::promise< std::uint16_t > portPromise )
+       : messages_{ std::move( messages ) },
+         portPromise_{ std::move( portPromise ) } {
       thread_ = std::jthread( [ this ]() { this->run(); } );
    }
 
@@ -95,7 +96,12 @@ class FakeSnakeServer {
    int clientSock_{ -1 };
 };
 
-class ClientIntegrationTest : public ::testing::Test {
+struct TestCase {
+   std::string name;
+   std::vector< Message::ServerMessage > messages;
+};
+
+class ClientIntegrationTest : public ::testing::TestWithParam< TestCase > {
  public:
    ClientIntegrationTest()
        : snakeClient_{ std::make_unique< Network::SnakeClient >(
@@ -109,11 +115,16 @@ class ClientIntegrationTest : public ::testing::Test {
                                                           std::move( promise ) );
    }
 
-   void startClient( const std::string_view ipAddr, uint16_t port ) {
-      clientThread_ = std::jthread{ [ & ]() {
-         EXPECT_EQ( snakeClient()->connect( ipAddr.data(), port ), 0 );
-         snakeClient()->doNetworkLoop();
+   bool startClient( const std::string_view ipAddr, uint16_t port ) {
+      std::promise< bool > connectedProm;
+      std::future< bool > connectedFut = connectedProm.get_future();
+      clientThread_ = std::jthread{ [ &, p = std::move( connectedProm ) ]() mutable {
+         bool connected = snakeClient()->connect( ipAddr.data(), port );
+         p.set_value( connected );
+         if ( connected )
+            snakeClient()->doNetworkLoop();
       } };
+      return connectedFut.get();
    }
 
    void stopClient() {
@@ -122,6 +133,18 @@ class ClientIntegrationTest : public ::testing::Test {
    }
 
    Network::SnakeClient *snakeClient() { return snakeClient_.get(); }
+
+   bool waitFor( std::function< bool() > pred,
+                 std::chrono::milliseconds timeout ) const {
+      auto deadline = std::chrono::steady_clock::now() + timeout;
+      while ( std::chrono::steady_clock::now() < deadline ) {
+         if ( pred() ) {
+            return true;
+         }
+         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
+      }
+      return false;
+   }
 
  protected:
    TSQueue< Message::ClientMessage > egress_;
@@ -133,35 +156,104 @@ class ClientIntegrationTest : public ::testing::Test {
 };
 
 // TODO: This should really just be a parameterized test with different messages
-TEST_F( ClientIntegrationTest, BasicIngressTest ) {
-   auto ack = Message::AckMessage{
-       { Message::ServerMessageType::JOIN_ACK }, 1, Message::NackReason::UNSET };
+TEST_P( ClientIntegrationTest, BasicIngressTest ) {
+   auto messages = GetParam().messages;
 
-   std::vector< Message::ServerMessage > messages{ ack };
+   std::promise< std::uint16_t > portProm;
+   auto portFut = portProm.get_future();
+   startServer( messages, std::move( portProm ) );
+   std::uint16_t port = portFut.get();
 
-   std::promise< std::uint16_t > prom;
-   auto fut = prom.get_future();
+   ASSERT_TRUE( startClient( "127.0.0.1", port ) );
+   ASSERT_TRUE( waitFor( [ & ]() { return ingress_.size() == messages.size(); },
+                         std::chrono::seconds( 5 ) ) );
 
-   startServer( std::move( messages ), std::move( prom ) );
-
-   std::uint16_t port = fut.get();
-
-   // TODO: Implement a waitFor mechanism to avoid these heuristic thread sleeps
-   std::this_thread::sleep_for( std::chrono::milliseconds( 200 ) );
-   startClient( "ipAddr", port );
-   std::this_thread::sleep_for( std::chrono::milliseconds( 300 ) );
-
-   EXPECT_EQ( ingress_.size(), 1 );
-
-   auto msgOpt = ingress_.try_front();
-   ASSERT_TRUE( msgOpt );
-
-   ASSERT_TRUE( std::holds_alternative< Message::AckMessage >( msgOpt.value() ) );
-
-   auto recvAck = std::get< Message::AckMessage >( msgOpt.value() );
-   EXPECT_EQ( ack.msgType, recvAck.msgType );
-   EXPECT_EQ( ack.id, recvAck.id );
-   EXPECT_EQ( ack.reason, recvAck.reason );
+   EXPECT_EQ( ingress_.size(), messages.size() );
+   for ( auto & msg : messages ) {
+      ASSERT_EQ( ingress_.pop(), msg );
+   }
 }
 
-// TODO: Add more test cases
+static const std::vector< TestCase > messages{
+    { "SingleRegisterAck",
+      { Message::AckMessage{ { Message::ServerMessageType::REGISTER_ACK },
+                             1,
+                             Message::NackReason::UNSET } } },
+    { "SingleJoinAck",
+      { Message::AckMessage{ { Message::ServerMessageType::JOIN_ACK },
+                             1,
+                             Message::NackReason::UNSET } } },
+    { "SingleChangeDirAck",
+      { Message::AckMessage{ { Message::ServerMessageType::CHANGE_DIR_ACK },
+                             1,
+                             Message::NackReason::UNSET } } },
+    { "SingleLeaveAck",
+      { Message::AckMessage{ { Message::ServerMessageType::LEAVE_ACK },
+                             1,
+                             Message::NackReason::UNSET } } },
+    { "SingleDisconnect",
+      { Message::DisconnectMessage{
+          { Message::ServerMessageType::DISCONNECT }, 6, "reason" } } },
+    { "SingleDeath",
+      { Message::DeathMessage{ { Message::ServerMessageType::DEATH }, 42 } } },
+    { "SingleSnapshot",
+      { Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
+                                  4,
+                                  { 0x01, 0x02, 0x03, 0x04 } } } },
+
+    // --- Edge cases ---
+    { "EmptyDisconnectReason",
+      { Message::DisconnectMessage{
+          { Message::ServerMessageType::DISCONNECT }, 0, "" } } },
+    { "ZeroScore",
+      { Message::DeathMessage{ { Message::ServerMessageType::DEATH }, 0 } } },
+    { "MaxScore",
+      { Message::DeathMessage{ { Message::ServerMessageType::DEATH },
+                               std::numeric_limits< uint32_t >::max() } } },
+    { "EmptySnapshot",
+      { Message::SnapshotMessage{
+          { Message::ServerMessageType::SNAPSHOT }, 0, {} } } },
+
+    // --- Multi-message tests ---
+    { "RegisterThenJoinAck",
+      { Message::AckMessage{ { Message::ServerMessageType::REGISTER_ACK },
+                             1,
+                             Message::NackReason::UNSET },
+        Message::AckMessage{ { Message::ServerMessageType::JOIN_ACK },
+                             1,
+                             Message::NackReason::UNSET } } },
+    { "FullSessionFlow",
+      { Message::AckMessage{ { Message::ServerMessageType::REGISTER_ACK },
+                             1,
+                             Message::NackReason::UNSET },
+        Message::AckMessage{ { Message::ServerMessageType::JOIN_ACK },
+                             1,
+                             Message::NackReason::UNSET },
+        Message::AckMessage{ { Message::ServerMessageType::CHANGE_DIR_ACK },
+                             1,
+                             Message::NackReason::UNSET },
+        Message::DeathMessage{ { Message::ServerMessageType::DEATH }, 100 },
+        Message::AckMessage{ { Message::ServerMessageType::LEAVE_ACK },
+                             1,
+                             Message::NackReason::UNSET } } },
+    { "SnapshotBurst",
+      { Message::SnapshotMessage{
+            { Message::ServerMessageType::SNAPSHOT }, 2, { 0xAA, 0xBB } },
+        Message::SnapshotMessage{
+            { Message::ServerMessageType::SNAPSHOT }, 2, { 0xCC, 0xDD } },
+        Message::SnapshotMessage{
+            { Message::ServerMessageType::SNAPSHOT }, 2, { 0xEE, 0xFF } } } },
+    { "AckThenDisconnect",
+      { Message::AckMessage{ { Message::ServerMessageType::JOIN_ACK },
+                             1,
+                             Message::NackReason::UNSET },
+        Message::DisconnectMessage{
+            { Message::ServerMessageType::DISCONNECT }, 4, "idle" } } },
+};
+
+INSTANTIATE_TEST_SUITE_P( BasicClientPipelineTest,
+                          ClientIntegrationTest,
+                          ::testing::ValuesIn( messages ),
+                          []( const testing::TestParamInfo< TestCase > & test ) {
+                             return test.param.name;
+                          } );
