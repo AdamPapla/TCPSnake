@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <type_traits>
@@ -15,6 +16,13 @@ template < typename T >
 concept TriviallySerializable =
     std::is_trivially_copyable_v< T > && std::is_standard_layout_v< T >;
 
+template < typename Coll >
+concept ContiguousDynamicallySized =
+    std::ranges::contiguous_range< Coll > &&
+    TriviallySerializable< std::ranges::range_value_t< Coll > > &&
+    !requires { std::tuple_size< Coll >::value; } && requires( Coll c ) {
+       { c.size() } -> std::convertible_to< std::size_t >;
+    };
 struct BytesCounter {
    std::uint32_t count{ 0 };
 
@@ -22,9 +30,10 @@ struct BytesCounter {
    void write( const T & ) {
       count += sizeof( T );
    }
-   template < TriviallySerializable T >
-   void writeBytes( const T *const, const std::size_t size ) {
-      count += size * sizeof( T );
+   template < ContiguousDynamicallySized Coll >
+   void write( const Coll & coll ) {
+      using Elem = std::ranges::range_value_t< Coll >;
+      count += coll.size() * sizeof( Elem );
    }
 };
 
@@ -42,17 +51,18 @@ class BytesWriter {
       std::memcpy( bytes_.data() + currentIdx, &val, sizeof( T ) );
       remBytes_ -= sizeof( T );
    }
-   template < TriviallySerializable T >
-   void writeBytes( const T *const data, const std::size_t size ) {
+   template < ContiguousDynamicallySized Coll >
+   void write( const Coll & coll ) {
+      using Elem = std::ranges::range_value_t< Coll >;
       std::size_t currentIdx = bytes_.size() - remBytes_;
-      std::size_t writeSize = size * sizeof( T );
+      std::size_t writeSize = coll.size() * sizeof( Elem );
       if ( remBytes_ < writeSize ) {
          throw std::runtime_error( "BytesWriter overflow" );
       }
-      std::memcpy( bytes_.data() + currentIdx, data, writeSize );
+      std::memcpy(
+          bytes_.data() + currentIdx, std::ranges::data( coll ), writeSize );
       remBytes_ -= writeSize;
    }
-
    std::size_t remainingBytes() { return remBytes_; }
 
  private:
@@ -97,17 +107,18 @@ struct BytesReader {
          throw std::runtime_error( "BytesReader underflow" );
       return res.value();
    }
-   template < TriviallySerializable T >
-   void readBytes( std::span< T > dest ) {
-      std::size_t writeSize = dest.size_bytes();
+   template < ContiguousDynamicallySized Coll >
+   void read( Coll & coll ) {
+      using Elem = std::ranges::range_value_t< Coll >;
+      std::size_t writeSize = coll.size() * sizeof( Elem );
       if ( remBytes_ < writeSize ) {
          throw std::runtime_error( "BytesReader underflow" );
       }
       std::size_t currentIdx = bytes_.size() - remBytes_;
-      std::memcpy( dest.data(), bytes_.data() + currentIdx, writeSize );
+      std::memcpy(
+          std::ranges::data( coll ), bytes_.data() + currentIdx, writeSize );
       remBytes_ -= writeSize;
    }
-
    void advance( std::size_t len ) { remBytes_ -= len; }
 
    std::size_t remainingBytes() { return remBytes_; }

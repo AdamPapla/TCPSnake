@@ -21,10 +21,10 @@ serialize( const Snapshot & snapshot, BytesOperator & writer ) {
    for ( auto & snake : snapshot.snakes ) {
       writer.write( snake.id );
       writer.write( narrow_size( snake.blocks ) );
-      writer.writeBytes( snake.blocks.data(), snake.blocks.size() );
+      writer.write( snake.blocks );
    }
    writer.write( narrow_size( snapshot.food ) );
-   writer.writeBytes( snapshot.food.data(), snapshot.food.size() );
+   writer.write( snapshot.food );
 }
 
 } // namespace
@@ -57,12 +57,12 @@ readSnapshot( BytesReader & reader ) {
       snake.id = reader.read< ClientId >();
       auto numBlocks = reader.read< std::uint16_t >();
       snake.blocks.resize( numBlocks );
-      reader.readBytes< Coord >( snake.blocks );
+      reader.read( snake.blocks );
       snapshot.snakes[ i ] = std::move( snake );
    }
    auto numFood = reader.read< std::uint16_t >();
    snapshot.food.resize( numFood );
-   reader.readBytes< Coord >( snapshot.food );
+   reader.read( snapshot.food );
 
    assert( reader.remainingBytes() == 0 && "Reader didn't fully read it's payload" );
 
