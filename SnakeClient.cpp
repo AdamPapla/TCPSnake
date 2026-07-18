@@ -9,7 +9,7 @@ template < typename T >
 T
 readAs( Serdes::BytesReader & reader ) {
    T msg;
-   Serdes::read( msg, reader );
+   Serdes::transfer( msg, reader );
    return msg;
 }
 
@@ -48,8 +48,9 @@ SnakeClient::connect( std::string_view serverAddr, std::uint16_t port ) {
    server.sin_family = AF_INET;
    inet_pton( AF_INET, serverAddr.data(), &server.sin_addr );
    server.sin_port = htons( port );
-   return ::connect(
-       sock_, reinterpret_cast< sockaddr * >( &server ), sizeof( server ) ) == 0;
+   return ::connect( sock_,
+                     reinterpret_cast< sockaddr * >( &server ),
+                     sizeof( server ) ) == 0;
 }
 
 void
@@ -103,14 +104,14 @@ SnakeClient::queueOutgoing() {
       Serdes::BytesCounter counter;
       bufferFull = std::visit(
           [ & ]( const auto & msg ) {
-             Serdes::write( msg, counter );
+             Serdes::transfer( msg, counter );
              // Bail early if we don't have space to write length + payload
              bufferFull =
                  sizeof( counter.count ) + counter.count > writer.remainingBytes();
              if ( bufferFull )
                 return false;
-             writer.write( counter.count );
-             Serdes::write( msg, writer );
+             writer.transfer( counter.count );
+             Serdes::transfer( msg, writer );
              return true;
           },
           outbound.value() );

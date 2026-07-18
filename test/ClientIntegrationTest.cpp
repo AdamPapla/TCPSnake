@@ -55,9 +55,9 @@ class FakeSnakeServer {
          Serdes::BytesCounter counter;
          std::visit(
              [ & ]( const auto & msg ) {
-                Serdes::write( msg, counter );
-                writer.write( counter.count );
-                Serdes::write( msg, writer );
+                Serdes::transfer( msg, counter );
+                writer.transfer( counter.count );
+                Serdes::transfer( msg, writer );
              },
              message );
       }
@@ -192,27 +192,25 @@ static const std::vector< TestCase > messages{
                              1,
                              Message::NackReason::UNSET } } },
     { "SingleDisconnect",
-      { Message::DisconnectMessage{
-          { Message::ServerMessageType::DISCONNECT }, 6, "reason" } } },
+      { Message::DisconnectMessage{ { Message::ServerMessageType::DISCONNECT },
+                                    "reason" } } },
     { "SingleDeath",
       { Message::DeathMessage{ { Message::ServerMessageType::DEATH }, 42 } } },
     { "SingleSnapshot",
       { Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
-                                  4,
                                   { 0x01, 0x02, 0x03, 0x04 } } } },
 
     // --- Edge cases ---
     { "EmptyDisconnectReason",
-      { Message::DisconnectMessage{
-          { Message::ServerMessageType::DISCONNECT }, 0, "" } } },
+      { Message::DisconnectMessage{ { Message::ServerMessageType::DISCONNECT },
+                                    "" } } },
     { "ZeroScore",
       { Message::DeathMessage{ { Message::ServerMessageType::DEATH }, 0 } } },
     { "MaxScore",
       { Message::DeathMessage{ { Message::ServerMessageType::DEATH },
                                std::numeric_limits< uint32_t >::max() } } },
     { "EmptySnapshot",
-      { Message::SnapshotMessage{
-          { Message::ServerMessageType::SNAPSHOT }, 0, {} } } },
+      { Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT }, {} } } },
 
     // --- Multi-message tests ---
     { "RegisterThenJoinAck",
@@ -237,18 +235,18 @@ static const std::vector< TestCase > messages{
                              1,
                              Message::NackReason::UNSET } } },
     { "SnapshotBurst",
-      { Message::SnapshotMessage{
-            { Message::ServerMessageType::SNAPSHOT }, 2, { 0xAA, 0xBB } },
-        Message::SnapshotMessage{
-            { Message::ServerMessageType::SNAPSHOT }, 2, { 0xCC, 0xDD } },
-        Message::SnapshotMessage{
-            { Message::ServerMessageType::SNAPSHOT }, 2, { 0xEE, 0xFF } } } },
+      { Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
+                                  { 0xAA, 0xBB } },
+        Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
+                                  { 0xCC, 0xDD } },
+        Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
+                                  { 0xEE, 0xFF } } } },
     { "AckThenDisconnect",
       { Message::AckMessage{ { Message::ServerMessageType::JOIN_ACK },
                              1,
                              Message::NackReason::UNSET },
-        Message::DisconnectMessage{
-            { Message::ServerMessageType::DISCONNECT }, 4, "idle" } } },
+        Message::DisconnectMessage{ { Message::ServerMessageType::DISCONNECT },
+                                    "idle" } } },
 };
 
 INSTANTIATE_TEST_SUITE_P( BasicClientPipelineTest,

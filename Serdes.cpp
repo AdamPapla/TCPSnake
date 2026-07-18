@@ -17,14 +17,14 @@ narrow_size( const std::vector< T > & vec ) {
 template < typename BytesOperator >
 void
 serialize( const Snapshot & snapshot, BytesOperator & writer ) {
-   writer.write( narrow_size( snapshot.snakes ) );
+   writer.transfer( narrow_size( snapshot.snakes ) );
    for ( auto & snake : snapshot.snakes ) {
-      writer.write( snake.id );
-      writer.write( narrow_size( snake.blocks ) );
-      writer.write( snake.blocks );
+      writer.transfer( snake.id );
+      writer.transfer( narrow_size( snake.blocks ) );
+      writer.transfer( snake.blocks );
    }
-   writer.write( narrow_size( snapshot.food ) );
-   writer.write( snapshot.food );
+   writer.transfer( narrow_size( snapshot.food ) );
+   writer.transfer( snapshot.food );
 }
 
 } // namespace
@@ -50,19 +50,20 @@ writeSnapshot( const Snapshot & snapshot ) {
 Snapshot
 readSnapshot( BytesReader & reader ) {
    Snapshot snapshot;
-   auto numSnakes = reader.read< std::uint16_t >();
+   std::uint16_t numSnakes = UINT16_MAX;
+   reader.transfer< std::uint16_t >( numSnakes );
    snapshot.snakes.resize( numSnakes );
    for ( uint16_t i = 0; i < numSnakes; ++i ) {
       SnakeSnapshot snake;
-      snake.id = reader.read< ClientId >();
-      auto numBlocks = reader.read< std::uint16_t >();
+      reader.transfer< ClientId >( snake.id );
+      auto numBlocks = reader.transfer< std::uint16_t >();
       snake.blocks.resize( numBlocks );
-      reader.read( snake.blocks );
+      reader.transfer( snake.blocks );
       snapshot.snakes[ i ] = std::move( snake );
    }
-   auto numFood = reader.read< std::uint16_t >();
+   auto numFood = reader.transfer< std::uint16_t >();
    snapshot.food.resize( numFood );
-   reader.read( snapshot.food );
+   reader.transfer( snapshot.food );
 
    assert( reader.remainingBytes() == 0 && "Reader didn't fully read it's payload" );
 
