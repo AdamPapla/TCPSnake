@@ -7,8 +7,29 @@
 #include <sys/socket.h>
 
 #include "BytesOperator.h"
+#include "GameState.h"
 #include "Messages.h"
 #include "SnakeClient.h"
+
+namespace {
+using namespace GameState;
+
+Coord
+makeCoord( std::uint32_t x, std::uint32_t y ) {
+   Coord c{};
+   c[ 0 ] = x;
+   c[ 1 ] = y;
+   return c;
+}
+
+SnakeSnapshot
+makeSnake( ClientId id, std::initializer_list< Coord > blocks ) {
+   SnakeSnapshot s{};
+   s.id = id;
+   s.blocks = blocks;
+   return s;
+}
+} // namespace
 
 class FakeSnakeServer {
  public:
@@ -56,7 +77,7 @@ class FakeSnakeServer {
          std::visit(
              [ & ]( const auto & msg ) {
                 Serdes::transfer( msg, counter );
-                writer.transfer( counter.count );
+                Serdes::transfer( counter.count, writer );
                 Serdes::transfer( msg, writer );
              },
              message );
@@ -197,8 +218,10 @@ static const std::vector< TestCase > messages{
     { "SingleDeath",
       { Message::DeathMessage{ { Message::ServerMessageType::DEATH }, 42 } } },
     { "SingleSnapshot",
-      { Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
-                                  { 0x01, 0x02, 0x03, 0x04 } } } },
+      { Message::SnapshotMessage{
+          { Message::ServerMessageType::SNAPSHOT },
+          Snapshot{ { makeSnake( 1, { makeCoord( 1, 1 ), makeCoord( 1, 2 ) } ) },
+                    { makeCoord( 5, 5 ) } } } } },
 
     // --- Edge cases ---
     { "EmptyDisconnectReason",
@@ -235,12 +258,15 @@ static const std::vector< TestCase > messages{
                              1,
                              Message::NackReason::UNSET } } },
     { "SnapshotBurst",
-      { Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
-                                  { 0xAA, 0xBB } },
+      { Message::SnapshotMessage{
+            { Message::ServerMessageType::SNAPSHOT },
+            Snapshot{ { makeSnake( 1, { makeCoord( 0, 0 ) } ) }, {} } },
         Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
-                                  { 0xCC, 0xDD } },
-        Message::SnapshotMessage{ { Message::ServerMessageType::SNAPSHOT },
-                                  { 0xEE, 0xFF } } } },
+                                  Snapshot{ {}, { makeCoord( 2, 2 ) } } },
+        Message::SnapshotMessage{
+            { Message::ServerMessageType::SNAPSHOT },
+            Snapshot{ { makeSnake( 2, { makeCoord( 9, 9 ) } ) },
+                      { makeCoord( 1, 1 ) } } } } },
     { "AckThenDisconnect",
       { Message::AckMessage{ { Message::ServerMessageType::JOIN_ACK },
                              1,

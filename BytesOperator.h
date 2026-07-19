@@ -2,6 +2,7 @@
 #include <concepts>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -23,7 +24,18 @@ concept ContiguousDynamicallySized =
     TriviallySerializable<
         std::ranges::range_value_t< std::remove_cvref_t< Coll > > > &&
     !requires { std::tuple_size< std::remove_cvref_t< Coll > >::value; } &&
-    requires( Coll c ) {
+    requires( std::remove_cvref_t< Coll > c ) {
+       { c.size() } -> std::convertible_to< std::size_t >;
+    };
+
+template < typename Coll >
+concept PushBackColl =
+    !ContiguousDynamicallySized< std::remove_cvref_t< Coll > > &&
+    requires( std::remove_cvref_t< Coll > c,
+              std::ranges::range_value_t< std::remove_cvref_t< Coll > > v ) {
+       c.push_back( v );
+    } &&
+    requires( std::remove_cvref_t< Coll > c ) {
        { c.size() } -> std::convertible_to< std::size_t >;
     };
 

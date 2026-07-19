@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "GameState.h"
 #include "Utility.h"
 
 namespace Message {
@@ -84,7 +85,7 @@ struct DeathMessage : ServerMessageBase {
 };
 
 struct SnapshotMessage : ServerMessageBase {
-   std::vector< std::uint8_t > bytes;
+   GameState::Snapshot snapshot;
    bool operator==( const SnapshotMessage & ) const = default;
 };
 

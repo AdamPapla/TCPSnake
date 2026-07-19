@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <meta>
 #include <optional>
 #include <type_traits>
@@ -35,25 +36,25 @@ using namespace Message;
 template < typename MessageT, typename BytesOp >
 void
 transfer( MessageT && msg, BytesOp & bytesOp ) {
-   using DeducedType = std::remove_reference_t< MessageT >;
-   using MessageType = std::remove_cvref_t< MessageT >;
+   using Deduced = std::remove_reference_t< MessageT >;
+   using UnqMessage = std::remove_cvref_t< MessageT >;
 
    static constexpr auto bases = std::define_static_array(
-       std::meta::bases_of( ^^MessageType, std::meta::access_context::current() ) );
+       std::meta::bases_of( ^^UnqMessage, std::meta::access_context::current() ) );
    template for ( constexpr auto b : bases ) {
       constexpr auto baseTypeMeta = std::meta::type_of( b );
       // We need to ensure to keep const-correct here
-      using BaseType = typename[:baseTypeMeta:];
-      if constexpr ( std::is_const_v< DeducedType > ) {
-         transfer( static_cast< const BaseType & >( msg ), bytesOp );
+      using Base = typename[:baseTypeMeta:];
+      if constexpr ( std::is_const_v< Deduced > ) {
+         transfer( static_cast< const Base & >( msg ), bytesOp );
       } else {
-         transfer( static_cast< BaseType & >( msg ), bytesOp );
+         transfer( static_cast< Base & >( msg ), bytesOp );
       }
    }
 
    static constexpr auto members =
        std::define_static_array( std::meta::nonstatic_data_members_of(
-           ^^MessageType, std::meta::access_context::current() ) );
+           ^^UnqMessage, std::meta::access_context::current() ) );
    template for ( constexpr auto m : members ) {
       if constexpr ( constexpr auto serializableOpt =
                          get_annotation< Message::Annotation::Serialize, m >();
@@ -74,20 +75,45 @@ transfer( MessageT && msg, BytesOp & bytesOp ) {
 template < ContiguousDynamicallySized MessageT, typename BytesOp >
 void
 transfer( MessageT && msg, BytesOp & bytesOp ) {
-   using LengthType = std::uint16_t;
-   auto collLen = static_cast< LengthType >( msg.size() );
-   bytesOp.template transfer( collLen );
+   using Length = std::uint16_t;
+   auto collLen = static_cast< Length >( msg.size() );
+   transfer( collLen, bytesOp );
    bytesOp.template transfer( msg );
 }
 
 template < ContiguousDynamicallySized MessageT >
 void
 transfer( MessageT && msg, BytesReader & bytesReader ) {
-   using LengthType = std::uint16_t;
-   auto collLen = static_cast< LengthType >( msg.size() );
-   bytesReader.template transfer( collLen );
+   using Length = std::uint16_t;
+   auto collLen = static_cast< Length >( msg.size() );
+   transfer( collLen, bytesReader );
    msg.resize( collLen );
    bytesReader.template transfer( msg );
+}
+
+template < PushBackColl MessageT, typename BytesOp >
+void
+transfer( MessageT && msg, BytesOp & bytesOp ) {
+   using Length = std::uint16_t;
+   auto collLen = static_cast< Length >( msg.size() );
+   transfer( collLen, bytesOp );
+   for ( auto && elem : msg ) {
+      transfer( elem, bytesOp );
+   }
+}
+
+template < PushBackColl MessageT >
+void
+transfer( MessageT && msg, BytesReader & bytesReader ) {
+   using Length = std::uint16_t;
+   using Elem = std::ranges::range_value_t< std::remove_cvref_t< MessageT > >;
+   Length collLen;
+   transfer( collLen, bytesReader );
+   Elem elem;
+   for ( int i = 0; i < collLen; ++i ) {
+      transfer( elem, bytesReader );
+      msg.push_back( std::move( elem ) );
+   }
 }
 
 } // namespace Serdes

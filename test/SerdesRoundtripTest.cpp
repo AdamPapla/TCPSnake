@@ -7,11 +7,30 @@
 #include "Messages.h"
 #include "Serializers.h"
 
+namespace {
+using namespace GameState;
+
+Coord
+makeCoord( std::uint32_t x, std::uint32_t y ) {
+   Coord c{};
+   c[ 0 ] = x;
+   c[ 1 ] = y;
+   return c;
+}
+
+SnakeSnapshot
+makeSnake( ClientId id, std::initializer_list< Coord > blocks ) {
+   SnakeSnapshot s{};
+   s.id = id;
+   s.blocks = blocks;
+   return s;
+}
+
 // Serialize a message to bytes then deserialize back, returning a reader over the
 // buffer. The caller holds the buffer and passes the reader to their transfer()
 // call.
 template < typename Msg >
-std::pair< std::vector< std::uint8_t >, Serdes::BytesReader >
+Msg
 makeRoundtrip( const Msg & msg ) {
    Serdes::BytesCounter counter;
    Serdes::transfer( msg, counter );
@@ -20,10 +39,13 @@ makeRoundtrip( const Msg & msg ) {
    Serdes::BytesWriter writer{ std::span< std::uint8_t >{ buf } };
    Serdes::transfer( msg, writer );
 
+   Msg readMsg;
    Serdes::BytesReader reader{ std::span< std::uint8_t >{ buf } };
-   return { std::move( buf ), reader };
+   transfer( readMsg, reader );
+   return readMsg;
 }
 
+} // namespace
 // ---------------------------------------------------------------------------
 // Client messages
 // ---------------------------------------------------------------------------
@@ -34,10 +56,8 @@ TEST( SerdesRoundtrip, RegisterMessage ) {
    original.existingClientId = 42;
    original.name = "Alice";
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   auto result = makeRoundtrip( original );
 
-   Message::RegisterMessage result;
-   Serdes::transfer( result, reader );
    EXPECT_EQ( result.msgType, original.msgType );
    EXPECT_EQ( result.existingClientId, original.existingClientId );
    EXPECT_EQ( result.name, original.name );
@@ -49,10 +69,8 @@ TEST( SerdesRoundtrip, RegisterMessageNoExistingId ) {
    original.existingClientId = 0;
    original.name = "Bob";
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   auto result = makeRoundtrip( original );
 
-   Message::RegisterMessage result;
-   Serdes::transfer( result, reader );
    EXPECT_EQ( result.existingClientId, 0 );
    EXPECT_EQ( result.name, "Bob" );
 }
@@ -62,10 +80,8 @@ TEST( SerdesRoundtrip, JoinMessage ) {
    original.msgType = Message::ClientMessageType::JOIN;
    original.roomId = 99999;
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   auto result = makeRoundtrip( original );
 
-   Message::JoinMessage result;
-   Serdes::transfer( result, reader );
    EXPECT_EQ( result.msgType, original.msgType );
    EXPECT_EQ( result.roomId, original.roomId );
 }
@@ -77,10 +93,8 @@ TEST( SerdesRoundtrip, ChangeDirMessage ) {
       original.msgType = Message::ClientMessageType::CHANGE_DIR;
       original.newDir = dir;
 
-      auto [ buf, reader ] = makeRoundtrip( original );
+      auto result = makeRoundtrip( original );
 
-      Message::ChangeDirMessage result;
-      Serdes::transfer( result, reader );
       EXPECT_EQ( result.msgType, original.msgType );
       EXPECT_EQ( result.newDir, dir );
    }
@@ -90,10 +104,8 @@ TEST( SerdesRoundtrip, LeaveMessage ) {
    Message::LeaveMessage original;
    original.msgType = Message::ClientMessageType::LEAVE;
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   auto result = makeRoundtrip( original );
 
-   Message::LeaveMessage result;
-   Serdes::transfer( result, reader );
    EXPECT_EQ( result.msgType, original.msgType );
 }
 
@@ -113,10 +125,8 @@ TEST( SerdesRoundtrip, AckMessage ) {
       original.id = 7;
       original.reason = Message::NackReason::UNSET;
 
-      auto [ buf, reader ] = makeRoundtrip( original );
+      auto result = makeRoundtrip( original );
 
-      Message::AckMessage result;
-      Serdes::transfer( result, reader );
       EXPECT_EQ( result.msgType, original.msgType );
       EXPECT_EQ( result.id, original.id );
       EXPECT_EQ( result.reason, original.reason );
@@ -128,10 +138,8 @@ TEST( SerdesRoundtrip, DisconnectMessage ) {
    original.msgType = Message::ServerMessageType::DISCONNECT;
    original.reason = "Server shutting down";
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   auto result = makeRoundtrip( original );
 
-   Message::DisconnectMessage result;
-   Serdes::transfer( result, reader );
    EXPECT_EQ( result.msgType, original.msgType );
    EXPECT_EQ( result.reason, original.reason );
 }
@@ -141,10 +149,9 @@ TEST( SerdesRoundtrip, DisconnectMessageEmptyReason ) {
    original.msgType = Message::ServerMessageType::DISCONNECT;
    original.reason = "";
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   auto result = makeRoundtrip( original );
 
-   Message::DisconnectMessage result;
-   Serdes::transfer( result, reader );
+   EXPECT_EQ( result.msgType, original.msgType );
    EXPECT_EQ( result.reason, "" );
 }
 
@@ -153,37 +160,64 @@ TEST( SerdesRoundtrip, DeathMessage ) {
    original.msgType = Message::ServerMessageType::DEATH;
    original.score = 1337;
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   auto result = makeRoundtrip( original );
 
-   Message::DeathMessage result;
-   Serdes::transfer( result, reader );
    EXPECT_EQ( result.msgType, original.msgType );
    EXPECT_EQ( result.score, original.score );
 }
 
-TEST( SerdesRoundtrip, SnapshotMessage ) {
+TEST( SerdesRoundTrip, EmptySnapshot ) {
    Message::SnapshotMessage original;
-   original.msgType = Message::ServerMessageType::SNAPSHOT;
-   original.bytes = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02 };
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   auto result = makeRoundtrip( original );
 
-   Message::SnapshotMessage result;
-   Serdes::transfer( result, reader );
    EXPECT_EQ( result.msgType, original.msgType );
-   EXPECT_EQ( result.bytes, original.bytes );
+   EXPECT_EQ( original.snapshot, result.snapshot );
 }
 
-TEST( SerdesRoundtrip, SnapshotMessageEmpty ) {
+TEST( SerdesRoundTrip, SingleSnakeNoFood ) {
    Message::SnapshotMessage original;
-   original.msgType = Message::ServerMessageType::SNAPSHOT;
-   original.bytes = {};
 
-   auto [ buf, reader ] = makeRoundtrip( original );
+   original.snapshot.snakes.push_back(
+       makeSnake( 1, { makeCoord( 1, 1 ), makeCoord( 1, 2 ), makeCoord( 1, 3 ) } ) );
 
-   Message::SnapshotMessage result;
-   Serdes::transfer( result, reader );
-   EXPECT_TRUE( result.bytes.empty() );
+   auto result = makeRoundtrip( original );
+
+   EXPECT_EQ( result.msgType, original.msgType );
+   EXPECT_EQ( original.snapshot, result.snapshot );
+}
+
+TEST( SerdesRoundTrip, MultipleSnakesAndFood ) {
+   Message::SnapshotMessage original;
+
+   original.snapshot.snakes.push_back(
+       makeSnake( 1, { makeCoord( 0, 0 ), makeCoord( 0, 1 ), makeCoord( 0, 2 ) } ) );
+   original.snapshot.snakes.push_back(
+       makeSnake( 2, { makeCoord( 5, 5 ), makeCoord( 5, 6 ) } ) );
+   original.snapshot.food = {
+       makeCoord( 10, 10 ), makeCoord( 3, 7 ), makeCoord( 8, 2 ) };
+
+   auto result = makeRoundtrip( original );
+
+   EXPECT_EQ( result.msgType, original.msgType );
+   EXPECT_EQ( original.snapshot, result.snapshot );
+}
+
+TEST( SerdesRoundTrip, LargeSnake ) {
+   Message::SnapshotMessage original;
+
+   SnakeSnapshot snake{};
+   snake.id = 42;
+
+   for ( uint32_t i = 0; i < 100; ++i ) {
+      snake.blocks.push_back( makeCoord( i, i + 1 ) );
+   }
+
+   original.snapshot.snakes.push_back( snake );
+   auto result = makeRoundtrip( original );
+
+   EXPECT_EQ( result.msgType, original.msgType );
+   EXPECT_EQ( original.snapshot, result.snapshot );
 }
 
 // ---------------------------------------------------------------------------

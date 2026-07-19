@@ -12,7 +12,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
 
 # Define library with game files
 ADD_LIBRARY( SnakeLibModule
-   SnakeGame.cpp Utility.cpp SnakeGameLogic.cpp Serdes.cpp SnakeClient.cpp
+   SnakeGame.cpp Utility.cpp SnakeGameLogic.cpp SnakeClient.cpp
 )
 target_include_directories(SnakeLibModule PUBLIC ${CMAKE_SOURCE_DIR})
 
@@ -31,7 +31,6 @@ find_package(GTest REQUIRED)
 # Testing
 set(TEST_FILES 
     test/SerdesRoundtripTest.cpp
-    test/DomainToMessageRoundtripTest.cpp
     test/ClientIntegrationTest.cpp
 )
 
