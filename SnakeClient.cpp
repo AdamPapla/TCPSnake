@@ -1,44 +1,9 @@
 #include "SnakeClient.h"
+#include "Messages.h"
+#include "SnakeSerdes.h"
 #include <sys/socket.h>
 
 namespace Network {
-
-namespace {
-
-template < typename T >
-T
-readAs( Serdes::BytesReader & reader ) {
-   T msg;
-   Serdes::transfer( msg, reader );
-   return msg;
-}
-
-std::optional< Message::ServerMessage >
-readNext( Serdes::BytesReader & reader ) {
-   using namespace Message;
-   auto msgLen = reader.try_read< std::uint32_t >();
-   if ( !msgLen || reader.remainingBytes() < msgLen.value() ) {
-      return std::nullopt;
-   }
-   auto msgType = reader.peek< Message::ServerMessageType >();
-   switch ( msgType ) {
-   case ServerMessageType::REGISTER_ACK:
-   case ServerMessageType::JOIN_ACK:
-   case ServerMessageType::CHANGE_DIR_ACK:
-   case ServerMessageType::LEAVE_ACK:
-      return readAs< AckMessage >( reader );
-   case ServerMessageType::SNAPSHOT:
-      return readAs< SnapshotMessage >( reader );
-   case ServerMessageType::DISCONNECT:
-      return readAs< DisconnectMessage >( reader );
-   case ServerMessageType::DEATH:
-      return readAs< DeathMessage >( reader );
-      return std::nullopt;
-   }
-   return std::nullopt;
-}
-
-} // namespace
 
 bool
 SnakeClient::connect( std::string_view serverAddr, std::uint16_t port ) {
@@ -80,7 +45,7 @@ SnakeClient::drainIngressQueue() {
                                      accumulator_.end() };
    Serdes::BytesReader reader( toRead );
    while ( !stop_.stop_requested() ) {
-      if ( auto msg = readNext( reader ); msg ) {
+      if ( auto msg = SnakeSerdes::readNextServerMsg( reader ); msg ) {
          assert( msg.has_value() );
          ingressQueue_.push( std::move( msg.value() ) );
       } else
@@ -96,25 +61,12 @@ SnakeClient::queueOutgoing() {
    // message.
    Serdes::BytesWriter writer{ std::span< uint8_t >(
        egressBuff_.begin() + writeOffset_, egressBuff_.end() ) };
-   bool bufferFull = writeOffset_ != buffSize_;
-   while ( !stop_.stop_requested() ) {
+   bool keepGoing = writeOffset_ < buffSize_;
+   while ( !stop_.stop_requested() && keepGoing ) {
       auto outbound = egressQueue_.try_front();
       if ( !outbound.has_value() )
          break;
-      Serdes::BytesCounter counter;
-      bufferFull = std::visit(
-          [ & ]( const auto & msg ) {
-             Serdes::transfer( msg, counter );
-             // Bail early if we don't have space to write length + payload
-             bufferFull =
-                 sizeof( counter.count ) + counter.count > writer.remainingBytes();
-             if ( bufferFull )
-                return false;
-             writer.transfer( counter.count );
-             Serdes::transfer( msg, writer );
-             return true;
-          },
-          outbound.value() );
+      keepGoing = SnakeSerdes::writeNext( writer, outbound.value() );
       egressQueue_.pop();
       writeOffset_ = buffSize_ - writer.remainingBytes();
    }
