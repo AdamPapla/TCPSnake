@@ -1,4 +1,5 @@
 #include "SnakeClient.h"
+#include <sys/socket.h>
 
 namespace Network {
 
@@ -16,7 +17,7 @@ std::optional< Message::ServerMessage >
 readNext( Serdes::BytesReader & reader ) {
    using namespace Message;
    auto msgLen = reader.try_read< std::uint32_t >();
-   if ( msgLen ||  reader.remainingBytes() < msgLen.value() ) {
+   if ( !msgLen || reader.remainingBytes() < msgLen.value() ) {
       return std::nullopt;
    }
    auto msgType = reader.peek< Message::ServerMessageType >();
@@ -40,18 +41,15 @@ readNext( Serdes::BytesReader & reader ) {
 } // namespace
 
 bool
-SnakeClient::connect() {
+SnakeClient::connect( std::string_view serverAddr, std::uint16_t port ) {
    sock_ = socket( AF_INET, SOCK_STREAM, 0 );
-
-   uint16_t serverPort = 8080;
-   std::string serverAddr = "127.0.0.1";
 
    sockaddr_in server{};
    server.sin_family = AF_INET;
-   inet_pton( AF_INET, serverAddr.c_str(), &server.sin_addr );
-   server.sin_port = htons( 8080 );
+   inet_pton( AF_INET, serverAddr.data(), &server.sin_addr );
+   server.sin_port = htons( port );
    return ::connect(
-       sock_, reinterpret_cast< sockaddr * >( &server ), sizeof( server ) );
+       sock_, reinterpret_cast< sockaddr * >( &server ), sizeof( server ) ) == 0;
 }
 
 void
@@ -81,11 +79,13 @@ SnakeClient::drainIngressQueue() {
                                      accumulator_.end() };
    Serdes::BytesReader reader( toRead );
    while ( !stop_.stop_requested() ) {
-      if ( auto msg = readNext( reader ) ) {
+      if ( auto msg = readNext( reader ); msg ) {
+         assert( msg.has_value() );
          ingressQueue_.push( std::move( msg.value() ) );
       } else
          break;
    }
+   readOffset_ = accumulator_.size() - reader.remainingBytes();
 }
 
 void
@@ -123,6 +123,9 @@ void
 SnakeClient::sendFromBuffer() {
    auto *sendStart = &( egressBuff_[ sendOffset_ ] );
    auto sendLen = writeOffset_ - sendOffset_;
+   if ( sendLen == 0 ) {
+      return;
+   }
    auto sentBytes = ::send( sock_, sendStart, sendLen, 0 );
    assert( sentBytes != -1 && "send call failed" );
    sendOffset_ += sentBytes;
@@ -139,7 +142,13 @@ SnakeClient::maybeCompactAccumulator() {
    if ( accumulator_.size() > buffSize_ / 2 ) {
       // TODO: This may lead to wasted allocations once the buffer fills again
       accumulator_.erase( accumulator_.begin(), accumulator_.begin() + readOffset_ );
+      readOffset_ = 0;
    }
+}
+
+void
+SnakeClient::interrupt() {
+   shutdown( sock_, SHUT_RDWR );
 }
 
 } // namespace Network

@@ -33,8 +33,10 @@ class SnakeClient {
                 std::stop_token stop )
        : ingressQueue_{ ingressQueue }, egressQueue_{ egressQueue }, stop_{ stop } {}
 
-   bool connect();
+   bool connect( std::string_view ipAddr, std::uint16_t port );
    void doNetworkLoop();
+   void interrupt();
+   ~SnakeClient() { close( sock_ ); }
 
  private:
    void drainIngressQueue();

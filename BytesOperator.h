@@ -16,7 +16,7 @@ concept TriviallySerializable =
     std::is_trivially_copyable_v< T > && std::is_standard_layout_v< T >;
 
 struct BytesCounter {
-   std::size_t count{ 0 };
+   std::uint32_t count{ 0 };
 
    template < TriviallySerializable T >
    void write( const T & ) {
@@ -77,11 +77,12 @@ struct BytesReader {
    }
    template < TriviallySerializable T >
    T peek() {
-      auto val = try_peek<T>();
-      if ( !val ) throw std::runtime_error("BytesReader underflow");
+      auto val = try_peek< T >();
+      if ( !val )
+         throw std::runtime_error( "BytesReader underflow" );
       return val.value();
    }
-   template< TriviallySerializable T >
+   template < TriviallySerializable T >
    std::optional< T > try_read() {
       auto val = try_peek< T >();
       if ( val ) {
@@ -92,7 +93,8 @@ struct BytesReader {
    template < TriviallySerializable T >
    T read() {
       auto res = try_read< T >();
-      if ( !res ) throw std::runtime_error( "BytesReader underflow" );
+      if ( !res )
+         throw std::runtime_error( "BytesReader underflow" );
       return res.value();
    }
    template < TriviallySerializable T >

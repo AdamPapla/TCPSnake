@@ -33,6 +33,7 @@ find_package(GTest REQUIRED)
 set(TEST_FILES 
     test/SerdesRoundtripTest.cpp
     test/DomainToMessageRoundtripTest.cpp
+    test/ClientIntegrationTest.cpp
 )
 
 # Add and link test executables
