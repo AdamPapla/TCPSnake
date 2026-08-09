@@ -20,6 +20,12 @@ SnakeClient::connect( std::string_view serverAddr, std::uint16_t port ) {
 
 void
 SnakeClient::doNetworkLoop() {
+   std::jthread recvThread{ [ & ]() { this->recvLoop(); } };
+   std::jthread sendThread{ [ & ]() { this->sendLoop(); } };
+}
+
+void
+SnakeClient::recvLoop() {
    while ( !stop_.stop_requested() ) {
       auto readBytes = ::recv( sock_, ingressBuff_.data(), ingressBuff_.size(), 0 );
       // TODO: Add proper error handling here
@@ -31,6 +37,12 @@ SnakeClient::doNetworkLoop() {
          drainIngressQueue();
          maybeCompactAccumulator();
       }
+   }
+}
+
+void
+SnakeClient::sendLoop() {
+   while ( !stop_.stop_requested() ) {
       queueOutgoing();
       sendFromBuffer();
    }

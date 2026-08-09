@@ -39,6 +39,8 @@ class SnakeClient {
    ~SnakeClient() { close( sock_ ); }
 
  private:
+   void recvLoop();
+   void sendLoop();
    void drainIngressQueue();
    void queueOutgoing();
    void sendFromBuffer();
