@@ -56,7 +56,7 @@ class SnakeGame {
       U32 yOffset = blockToPosition( block.y );
       Texture2D bodyTexture = LoadTexture( "bodyTexture.png" );
       DrawRectangle( xOffset, yOffset, blockSize - 1, blockSize - 1, color );
-      float scaleFactor = blockSize / 32.0;
+      float scaleFactor = static_cast< float >( blockSize ) / 32.0f;
       Vector2 position = { (float)xOffset, (float)yOffset };
       DrawTextureEx( bodyTexture, position, 0.0f, scaleFactor, color );
    }

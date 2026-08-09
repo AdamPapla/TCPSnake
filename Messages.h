@@ -6,10 +6,18 @@
 #include <variant>
 #include <vector>
 
+#include "GameState.h"
 #include "Utility.h"
 
 namespace Message {
 
+namespace Annotation {
+
+struct Serialize {
+   bool shouldSerialize{ true };
+};
+
+} // namespace Annotation
 enum class ClientMessageType : std::uint16_t { REGISTER, JOIN, CHANGE_DIR, LEAVE };
 
 struct ClientMessageBase {
@@ -19,7 +27,6 @@ struct ClientMessageBase {
 
 struct RegisterMessage : ClientMessageBase {
    ClientId existingClientId; // 0 is sentinel/null value
-   std::uint8_t nameLen;
    std::string name;
    bool operator==( const RegisterMessage & ) const = default;
 };
@@ -68,7 +75,6 @@ struct AckMessage : ServerMessageBase {
 };
 
 struct DisconnectMessage : ServerMessageBase {
-   std::uint16_t reasonLen;
    std::string reason;
    bool operator==( const DisconnectMessage & ) const = default;
 };
@@ -79,8 +85,7 @@ struct DeathMessage : ServerMessageBase {
 };
 
 struct SnapshotMessage : ServerMessageBase {
-   uint32_t snapshotLen;
-   std::vector< std::uint8_t > bytes;
+   GameState::Snapshot snapshot;
    bool operator==( const SnapshotMessage & ) const = default;
 };
 

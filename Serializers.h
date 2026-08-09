@@ -1,134 +1,119 @@
 #pragma once
+#include "BytesOperator.h"
+#include "Messages.h"
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
+#include <meta>
+#include <optional>
+#include <type_traits>
 #include <vector>
 
-#include "Messages.h"
-#include "Serdes.h"
+namespace {
+template < typename T, std::meta::info member >
+consteval std::optional< T >
+get_annotation() {
+   constexpr auto annotations = std::define_static_array(
+       std::meta::annotations_of_with_type( member, ^^T ) );
+   if constexpr ( annotations.empty() ) {
+      return std::nullopt;
+   } else {
+      static_assert(
+          annotations.size() <= 1,
+          "Cannot have multiple annotations of the same type on the same member" );
+      constexpr auto annotation = annotations[ 0 ];
+      return std::optional< T >( std::meta::extract< T >( annotation ) );
+   }
+   return std::nullopt;
+}
+} // namespace
 
 namespace Serdes {
 
 using namespace Message;
 
-// Keeping these generic and instantiating with BytesCounter or BytesWriter prevents
-// our size calculation and serialization going out of sync
-template < typename BytesOp >
+template < typename MessageT, typename BytesOp >
 void
-write( const RegisterMessage & msg, BytesOp & bytesOp ) {
-   bytesOp.write( msg.msgType );
-   bytesOp.write( msg.existingClientId );
-   bytesOp.write( msg.nameLen );
-   bytesOp.writeBytes( msg.name.data(), msg.nameLen );
+transfer( MessageT && msg, BytesOp & bytesOp ) {
+   using Deduced = std::remove_reference_t< MessageT >;
+   using UnqMessage = std::remove_cvref_t< MessageT >;
+
+   static constexpr auto bases = std::define_static_array(
+       std::meta::bases_of( ^^UnqMessage, std::meta::access_context::current() ) );
+   template for ( constexpr auto b : bases ) {
+      constexpr auto baseTypeMeta = std::meta::type_of( b );
+      // We need to ensure to keep const-correct here
+      using Base = typename[:baseTypeMeta:];
+      if constexpr ( std::is_const_v< Deduced > ) {
+         transfer( static_cast< const Base & >( msg ), bytesOp );
+      } else {
+         transfer( static_cast< Base & >( msg ), bytesOp );
+      }
+   }
+
+   static constexpr auto members =
+       std::define_static_array( std::meta::nonstatic_data_members_of(
+           ^^UnqMessage, std::meta::access_context::current() ) );
+   template for ( constexpr auto m : members ) {
+      if constexpr ( constexpr auto serializableOpt =
+                         get_annotation< Message::Annotation::Serialize, m >();
+                     serializableOpt.has_value() &&
+                     !serializableOpt.value().shouldSerialize ) {
+         continue;
+      }
+      transfer( msg.[:m:], bytesOp );
+   }
 }
 
-inline void
-read( RegisterMessage & msg, BytesReader & reader ) {
-   msg.msgType = reader.read< ClientMessageType >();
-   msg.existingClientId = reader.read< ClientId >();
-   using NameLen = decltype( RegisterMessage::nameLen );
-   msg.nameLen = reader.read< NameLen >();
-   msg.name.resize( msg.nameLen );
-   reader.readBytes< char >( msg.name );
-}
-
-template < typename BytesOp >
+template < TriviallySerializable MessageT, typename BytesOp >
 void
-write( const JoinMessage msg, BytesOp & bytesOp ) {
-   bytesOp.write( msg.msgType );
-   bytesOp.write( msg.roomId );
+transfer( MessageT && msg, BytesOp & bytesOp ) {
+   bytesOp.template transfer( msg );
 }
 
-inline void
-read( JoinMessage & msg, BytesReader & reader ) {
-   msg.msgType = reader.read< ClientMessageType >();
-   msg.roomId = reader.read< std::uint32_t >();
-}
-
-template < typename BytesOp >
+template < ContiguousDynamicallySized MessageT, typename BytesOp >
 void
-write( const ChangeDirMessage msg, BytesOp & bytesOp ) {
-   bytesOp.write( msg.msgType );
-   bytesOp.write( msg.newDir );
+transfer( MessageT && msg, BytesOp & bytesOp ) {
+   using Length = std::uint16_t;
+   auto collLen = static_cast< Length >( msg.size() );
+   transfer( collLen, bytesOp );
+   bytesOp.template transfer( msg );
 }
 
-inline void
-read( ChangeDirMessage & msg, BytesReader & reader ) {
-   msg.msgType = reader.read< ClientMessageType >();
-   msg.newDir = reader.read< Move >();
-}
-
-template < typename BytesOp >
+template < ContiguousDynamicallySized MessageT >
 void
-write( const LeaveMessage msg, BytesOp & bytesOp ) {
-   bytesOp.write( msg.msgType );
+transfer( MessageT && msg, BytesReader & bytesReader ) {
+   using Length = std::uint16_t;
+   auto collLen = static_cast< Length >( msg.size() );
+   transfer( collLen, bytesReader );
+   msg.resize( collLen );
+   bytesReader.template transfer( msg );
 }
 
-inline void
-read( LeaveMessage & msg, BytesReader & reader ) {
-   msg.msgType = reader.read< ClientMessageType >();
-}
-
-template < typename BytesOp >
+template < PushBackColl MessageT, typename BytesOp >
 void
-write( const AckMessage msg, BytesOp & bytesOp ) {
-   bytesOp.write( msg.msgType );
-   bytesOp.write( msg.id );
-   bytesOp.write( msg.reason );
+transfer( MessageT && msg, BytesOp & bytesOp ) {
+   using Length = std::uint16_t;
+   auto collLen = static_cast< Length >( msg.size() );
+   transfer( collLen, bytesOp );
+   for ( auto && elem : msg ) {
+      transfer( elem, bytesOp );
+   }
 }
 
-inline void
-read( AckMessage & ack, BytesReader & reader ) {
-   ack.msgType = reader.read< ServerMessageType >();
-   ack.id = reader.read< ClientId >();
-   ack.reason = reader.read< NackReason >();
-}
-
-template < typename BytesOp >
+template < PushBackColl MessageT >
 void
-write( const DisconnectMessage & msg, BytesOp & bytesOp ) {
-   bytesOp.write( msg.msgType );
-   bytesOp.write( msg.reasonLen );
-   bytesOp.writeBytes( msg.reason.data(), msg.reasonLen );
-}
-
-inline void
-read( DisconnectMessage & msg, BytesReader & reader ) {
-   using MsgLen = decltype( DisconnectMessage::reasonLen );
-   msg.msgType = reader.read< ServerMessageType >();
-   msg.reasonLen = reader.read< MsgLen >();
-   msg.reason.resize( msg.reasonLen );
-   reader.readBytes< char >( msg.reason );
-}
-
-template < typename BytesOp >
-void
-write( const DeathMessage msg, BytesOp & bytesOp ) {
-   bytesOp.write( msg.msgType );
-   bytesOp.write( msg.score );
-}
-
-inline void
-read( DeathMessage & msg, BytesReader & reader ) {
-   msg.msgType = reader.read< ServerMessageType >();
-   msg.score = reader.read< uint32_t >();
-}
-
-template < typename BytesOp >
-void
-write( const SnapshotMessage & msg, BytesOp & bytesOp ) {
-   bytesOp.write( msg.msgType );
-   bytesOp.write( msg.snapshotLen );
-   bytesOp.writeBytes( msg.bytes.data(), msg.snapshotLen );
-}
-
-inline void
-read( SnapshotMessage & msg, BytesReader & reader ) {
-   using MsgLen = decltype( SnapshotMessage::snapshotLen );
-   msg.msgType = reader.read< ServerMessageType >();
-   msg.snapshotLen = reader.read< MsgLen >();
-   msg.bytes.resize( msg.snapshotLen );
-   reader.readBytes< std::uint8_t >( msg.bytes );
+transfer( MessageT && msg, BytesReader & bytesReader ) {
+   using Length = std::uint16_t;
+   using Elem = std::ranges::range_value_t< std::remove_cvref_t< MessageT > >;
+   Length collLen;
+   transfer( collLen, bytesReader );
+   Elem elem;
+   for ( int i = 0; i < collLen; ++i ) {
+      transfer( elem, bytesReader );
+      msg.push_back( std::move( elem ) );
+   }
 }
 
 } // namespace Serdes
