@@ -22,6 +22,7 @@
 #include "BytesOperator.h"
 #include "Messages.h"
 #include "Serializers.h"
+#include "SnakeCommon.h"
 #include "TSQueue.h"
 
 namespace Network {
@@ -41,10 +42,8 @@ class SnakeClient {
  private:
    void recvLoop();
    void sendLoop();
-   void drainIngressQueue();
    void queueOutgoing();
    void sendFromBuffer();
-   void maybeCompactAccumulator();
 
    constinit static const std::size_t buffSize_{ 8192 };
 
@@ -52,7 +51,7 @@ class SnakeClient {
    TSQueue< Message::ClientMessage > & egressQueue_;
 
    std::array< std::uint8_t, buffSize_ > ingressBuff_;
-   std::vector< std::uint8_t > accumulator_;
+   SessionCommon::Accumulator< std::uint8_t > accumulator_;
    std::size_t readOffset_{ 0 };
 
    std::array< std::uint8_t, buffSize_ > egressBuff_;

@@ -1,64 +1,23 @@
+#pragma once
+#include "MessageTraits.h"
 #include "Messages.h"
 #include "Serializers.h"
 
 namespace SnakeSerdes {
 
-template < typename T >
-static T
-readAs( Serdes::BytesReader & reader ) {
-   T msg;
-   Serdes::transfer( msg, reader );
-   return msg;
-}
-
-static std::optional< Message::ServerMessage >
-readNextServerMsg( Serdes::BytesReader & reader ) {
+template < typename Message >
+static std::optional< Message >
+readNext( Serdes::BytesReader & reader ) {
    using namespace Message;
    auto msgLen = reader.try_read< std::uint32_t >();
    if ( !msgLen || reader.remainingBytes() < msgLen.value() ) {
       return std::nullopt;
    }
-   auto msgType = reader.peek< Message::ServerMessageType >();
-   switch ( msgType ) {
-   case ServerMessageType::REGISTER_ACK:
-   case ServerMessageType::JOIN_ACK:
-   case ServerMessageType::CHANGE_DIR_ACK:
-   case ServerMessageType::LEAVE_ACK:
-      return readAs< AckMessage >( reader );
-   case ServerMessageType::SNAPSHOT:
-      return readAs< SnapshotMessage >( reader );
-   case ServerMessageType::DISCONNECT:
-      return readAs< DisconnectMessage >( reader );
-   case ServerMessageType::DEATH:
-      return readAs< DeathMessage >( reader );
-      return std::nullopt;
-   }
-   return std::nullopt;
+   auto msgType = reader.peek< typename MessageTraits< Message >::Type >();
+   return MessageTraits< Message >::read( msgType, reader );
 }
 
-static std::optional< Message::ClientMessage >
-readNextClientMsg( Serdes::BytesReader & reader ) {
-   using namespace Message;
-   auto msgLen = reader.try_read< std::uint32_t >();
-   if ( !msgLen || reader.remainingBytes() < msgLen.value() ) {
-      return std::nullopt;
-   }
-   auto msgType = reader.peek< Message::ClientMessageType >();
-   switch ( msgType ) {
-   case ClientMessageType::REGISTER:
-      return readAs< RegisterMessage >( reader );
-   case ClientMessageType::JOIN:
-      return readAs< JoinMessage >( reader );
-   case ClientMessageType::CHANGE_DIR:
-      return readAs< ChangeDirMessage >( reader );
-   case ClientMessageType::LEAVE:
-      return readAs< LeaveMessage >( reader );
-      return std::nullopt;
-   }
-   return std::nullopt;
-}
-
-template< typename Message >
+template < typename Message >
 static bool
 writeNext( Serdes::BytesWriter & writer, const Message & outbound ) {
    Serdes::BytesCounter counter;
@@ -78,4 +37,4 @@ writeNext( Serdes::BytesWriter & writer, const Message & outbound ) {
    return true;
 }
 
-} // SnakeSerdes
+} // namespace SnakeSerdes
