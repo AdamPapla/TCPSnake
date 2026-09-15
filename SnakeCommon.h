@@ -36,7 +36,7 @@ class Accumulator : public std::vector< T > {
 };
 
 template < typename Message >
-static void
+void
 onReceive( Accumulator< std::uint8_t > & accumulator,
            TSQueue< Message > & msgQueue,
            const std::stop_token & stop ) {
@@ -50,6 +50,31 @@ onReceive( Accumulator< std::uint8_t > & accumulator,
    }
    accumulator.updateOffset( reader.remainingBytes() );
    accumulator.maybeCompact();
+}
+
+template < typename Message >
+std::span< std::uint8_t >
+prepareOutgoing( std::span< std::uint8_t > egressBuff,
+                 size_t & writeOffset,
+                 const size_t sendOffset,
+                 TSQueue< Message > & msgQueue,
+                 std::stop_token stop ) {
+   // We queue to buffer to make use of TCP's partial sends and prevent blocking
+   // network thread for too long Ensure we have enough space, then write the
+   // message.
+   Serdes::BytesWriter writer{
+       std::span< uint8_t >( egressBuff.begin() + writeOffset, egressBuff.end() ) };
+   bool keepGoing = writeOffset < egressBuff.size();
+   while ( !stop.stop_requested() && keepGoing ) {
+      auto outbound = msgQueue.try_front();
+      if ( !outbound.has_value() )
+         break;
+      keepGoing = SnakeSerdes::writeNext( writer, outbound.value() );
+      msgQueue.pop();
+   }
+   writeOffset = egressBuff.size() - writer.remainingBytes();
+   return std::span< uint8_t >( egressBuff.begin() + sendOffset,
+                                egressBuff.begin() + writeOffset );
 }
 
 } // namespace SessionCommon

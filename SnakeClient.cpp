@@ -44,37 +44,18 @@ SnakeClient::recvLoop() {
 void
 SnakeClient::sendLoop() {
    while ( !stop_.stop_requested() ) {
-      queueOutgoing();
-      sendFromBuffer();
+      dispatchOutgoing();
    }
 }
 
 void
-SnakeClient::queueOutgoing() {
-   // We queue to buffer to make use of TCP's partial sends and prevent blocking
-   // network thread for too long Ensure we have enough space, then write the
-   // message.
-   Serdes::BytesWriter writer{ std::span< uint8_t >(
-       egressBuff_.begin() + writeOffset_, egressBuff_.end() ) };
-   bool keepGoing = writeOffset_ < buffSize_;
-   while ( !stop_.stop_requested() && keepGoing ) {
-      auto outbound = egressQueue_.try_front();
-      if ( !outbound.has_value() )
-         break;
-      keepGoing = SnakeSerdes::writeNext( writer, outbound.value() );
-      egressQueue_.pop();
-      writeOffset_ = buffSize_ - writer.remainingBytes();
-   }
-}
-
-void
-SnakeClient::sendFromBuffer() {
-   auto *sendStart = &( egressBuff_[ sendOffset_ ] );
-   auto sendLen = writeOffset_ - sendOffset_;
-   if ( sendLen == 0 ) {
+SnakeClient::dispatchOutgoing() {
+   auto toSend = SessionCommon::prepareOutgoing(
+       egressBuff_, writeOffset_, sendOffset_, egressQueue_, stop_ );
+   if ( toSend.empty() ) {
       return;
    }
-   auto sentBytes = ::send( sock_, sendStart, sendLen, 0 );
+   auto sentBytes = ::send( sock_, toSend.data(), toSend.size(), 0 );
    assert( sentBytes != -1 && "send call failed" );
    sendOffset_ += sentBytes;
    // TODO: Again - ring buffers make this clean. This is just a stop-gap

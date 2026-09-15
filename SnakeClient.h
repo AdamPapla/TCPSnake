@@ -42,8 +42,7 @@ class SnakeClient {
  private:
    void recvLoop();
    void sendLoop();
-   void queueOutgoing();
-   void sendFromBuffer();
+   void dispatchOutgoing();
 
    constinit static const std::size_t buffSize_{ 8192 };
 
@@ -52,7 +51,6 @@ class SnakeClient {
 
    std::array< std::uint8_t, buffSize_ > ingressBuff_;
    SessionCommon::Accumulator< std::uint8_t > accumulator_;
-   std::size_t readOffset_{ 0 };
 
    std::array< std::uint8_t, buffSize_ > egressBuff_;
    std::size_t writeOffset_{ 0 };

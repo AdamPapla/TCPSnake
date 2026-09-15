@@ -31,6 +31,7 @@ class TSQueue {
       std::lock_guard< std::mutex > lk( mutex_ );
       return queue_.size();
    }
+   bool empty() const { return size() == 0; }
 
  private:
    mutable std::mutex mutex_;
