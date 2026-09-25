@@ -116,4 +116,12 @@ transfer( MessageT && msg, BytesReader & bytesReader ) {
    }
 }
 
+template < typename T >
+static T
+readAs( Serdes::BytesReader & reader ) {
+   T msg;
+   Serdes::transfer( msg, reader );
+   return msg;
+}
+
 } // namespace Serdes

@@ -10,12 +10,15 @@
 #include <optional>
 #include <queue>
 #include <random>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
 
+#include "Messages.h"
+#include "SnakeCommon.h"
 #include "TSQueue.h"
 
 struct ServerTcpConfig {
@@ -24,56 +27,56 @@ struct ServerTcpConfig {
 
 using Tick = std::uint32_t;
 
+namespace Network {
+
 // Making this a struct for now in case it needs expanded later
 struct ClientConnection {
-   ClientConnection( int sock ) : clientSock{ sock } {}
-   int clientSock;
+   ClientConnection( uint32_t id, int s ) : clientId{ id }, sock{ s } {}
+
+   ClientId clientId;
+   int sock;
+
+   // TODO: Move to circular buffers
+   SessionCommon::Accumulator< std::uint8_t > accumulator;
+   static constexpr int sendBuffSize = 2048;
+   std::array< std::uint8_t, sendBuffSize > egressBuff_;
+   std::size_t writeOffset_{ 0 };
+   std::size_t sendOffset_{ 0 };
+
+   TSQueue< Message::ServerMessage > egress;
+   TSQueue< Message::ClientMessage > ingress;
 };
 
+// Server is single threaded, using epoll for registering new connections and
+// handling writes/reads for existing clients. 
 class SnakeServer {
  public:
-   SnakeServer( ServerTcpConfig config, std::function< bool() > exitFunc )
-       : config_{ config }, shouldExit{ exitFunc }, listenSock_{ -1 } {}
-   ~SnakeServer() {
-      if ( listenSock_ != -1 ) {
-         close( listenSock_ );
-      }
+   SnakeServer( ServerTcpConfig config, std::stop_token st )
+       : stop_{ st }, config_{ config }, epollFd_{ -1 }, listenSock_{ -1 } {
+      initialize();
    }
-   void listen() {
-      listenSock_ = socket( AF_INET, SOCK_STREAM, 0 );
-      if ( listenSock_ != -1 ) {
-         throw std::runtime_error( "Failed to open listening socket" );
-      }
-      sockaddr_in addr{};
-      addr.sin_family = config_.family;
-      addr.sin_addr.s_addr = INADDR_ANY;
-      uint16_t port = 8080;
-      addr.sin_port = htons( port );
-      if ( bind( listenSock_,
-                 reinterpret_cast< sockaddr * >( &addr ),
-                 sizeof( addr ) ) == -1 ) {
-         throw std::runtime_error(
-             std::format( "Could not find port at {}", port ) );
-      }
-      if ( ::listen( listenSock_, 10 ) == -1 ) {
-         throw std::runtime_error( std::format(
-             "Failed to listen on socket {}, port {}", listenSock_, port ) );
-      }
-      std::cout << "Listening for incoming connections..." << std::endl;
-      while ( !shouldExit() ) {
-         // TODO: This is blocking - should probably make it just try so we can
-         // respect shouldExit
-         int clientSock = accept( listenSock_, nullptr, nullptr );
-         if ( clientSock == -1 ) {
-            continue;
-         }
-         clientQueue_.push( ClientConnection( clientSock ) );
-      }
-   }
+   ~SnakeServer();
+   void networkLoop();
+   // This can safely be called across threads. epoll_ctl is thread safe
+   void markWritable( ClientConnection *client );
+   const auto & connections() const { return connections_; }
 
  private:
-   TSQueue< ClientConnection > clientQueue_;
-   std::function< bool() > shouldExit;
+   void initialize();
+   void registerListener();
+   void registerConnection( const int clientSock );
+   bool onReadable( ClientConnection *readyClient );
+   bool onWritable( ClientConnection *readyClient );
+   void dispatchOutgoing();
+
+   std::stop_token stop_;
    ServerTcpConfig config_;
+   int epollFd_;
    int listenSock_;
+
+   ClientId nextClientId_{ 1 };
+   std::unordered_map< ClientId, std::unique_ptr< ClientConnection > > connections_;
+   static constexpr int recvBuffSize = 2048;
+   std::array< std::uint8_t, recvBuffSize > ingressBuff_;
 };
+} // namespace Network

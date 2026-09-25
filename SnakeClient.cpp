@@ -1,5 +1,6 @@
 #include "SnakeClient.h"
 #include "Messages.h"
+#include "SnakeCommon.h"
 #include "SnakeSerdes.h"
 #include <sys/socket.h>
 
@@ -8,6 +9,7 @@ namespace Network {
 bool
 SnakeClient::connect( std::string_view serverAddr, std::uint16_t port ) {
    sock_ = socket( AF_INET, SOCK_STREAM, 0 );
+   LOG( "Connecting to server on addr {}, port {}", serverAddr, port );
 
    sockaddr_in server{};
    server.sin_family = AF_INET;
@@ -26,16 +28,18 @@ SnakeClient::doNetworkLoop() {
 
 void
 SnakeClient::recvLoop() {
+   LOG( "Starting receive loop on client listening to socket {}", sock_ );
    while ( !stop_.stop_requested() ) {
       auto readBytes = ::recv( sock_, ingressBuff_.data(), ingressBuff_.size(), 0 );
       // TODO: Add proper error handling here
       assert( readBytes != -1 && "recv call failed" );
+      LOG( "Received {} bytes on client", readBytes );
       if ( readBytes > 0 ) {
          accumulator_.insert( accumulator_.end(),
                               ingressBuff_.begin(),
                               ingressBuff_.begin() + readBytes );
-         drainIngressQueue();
-         maybeCompactAccumulator();
+         SessionCommon::onReceive< Message::ServerMessage >(
+             accumulator_, ingressQueue_, stop_ );
       }
    }
 }
@@ -43,71 +47,25 @@ SnakeClient::recvLoop() {
 void
 SnakeClient::sendLoop() {
    while ( !stop_.stop_requested() ) {
-      queueOutgoing();
-      sendFromBuffer();
+      dispatchOutgoing();
    }
 }
 
 void
-SnakeClient::drainIngressQueue() {
-   using namespace Message;
-   // TODO: Good opportunity to practice circular buffers here, for now just
-   // going with simple read offset + occasional resize.
-   std::span< std::uint8_t > toRead{ accumulator_.begin() + readOffset_,
-                                     accumulator_.end() };
-   Serdes::BytesReader reader( toRead );
-   while ( !stop_.stop_requested() ) {
-      if ( auto msg = SnakeSerdes::readNextServerMsg( reader ); msg ) {
-         assert( msg.has_value() );
-         ingressQueue_.push( std::move( msg.value() ) );
-      } else
-         break;
-   }
-   readOffset_ = accumulator_.size() - reader.remainingBytes();
-}
-
-void
-SnakeClient::queueOutgoing() {
-   // We queue to buffer to make use of TCP's partial sends and prevent blocking
-   // network thread for too long Ensure we have enough space, then write the
-   // message.
-   Serdes::BytesWriter writer{ std::span< uint8_t >(
-       egressBuff_.begin() + writeOffset_, egressBuff_.end() ) };
-   bool keepGoing = writeOffset_ < buffSize_;
-   while ( !stop_.stop_requested() && keepGoing ) {
-      auto outbound = egressQueue_.try_front();
-      if ( !outbound.has_value() )
-         break;
-      keepGoing = SnakeSerdes::writeNext( writer, outbound.value() );
-      egressQueue_.pop();
-      writeOffset_ = buffSize_ - writer.remainingBytes();
-   }
-}
-
-void
-SnakeClient::sendFromBuffer() {
-   auto *sendStart = &( egressBuff_[ sendOffset_ ] );
-   auto sendLen = writeOffset_ - sendOffset_;
-   if ( sendLen == 0 ) {
+SnakeClient::dispatchOutgoing() {
+   auto toSend = SessionCommon::prepareOutgoing(
+       egressBuff_, writeOffset_, sendOffset_, egressQueue_, stop_ );
+   if ( toSend.empty() ) {
       return;
    }
-   auto sentBytes = ::send( sock_, sendStart, sendLen, 0 );
+   auto sentBytes = ::send( sock_, toSend.data(), toSend.size(), 0 );
+   LOG( "Sent {} bytes from client", sentBytes );
    assert( sentBytes != -1 && "send call failed" );
    sendOffset_ += sentBytes;
    // TODO: Again - ring buffers make this clean. This is just a stop-gap
    if ( sendOffset_ == writeOffset_ ) {
       sendOffset_ = 0;
       writeOffset_ = 0;
-   }
-}
-
-// TODO: Ring buffers will remove the need for this shrinking
-void
-SnakeClient::maybeCompactAccumulator() {
-   if ( accumulator_.size() > buffSize_ / 2 ) {
-      // TODO: This may lead to wasted allocations once the buffer fills again
-      accumulator_.erase( accumulator_.begin(), accumulator_.begin() + readOffset_ );
-      readOffset_ = 0;
    }
 }
 

@@ -12,7 +12,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
 
 # Define library with game files
 ADD_LIBRARY( SnakeLibModule
-   SnakeGame.cpp Utility.cpp SnakeGameLogic.cpp SnakeClient.cpp
+   SnakeGame.cpp Utility.cpp SnakeGameLogic.cpp SnakeClient.cpp SnakeServer.cpp
 )
 target_include_directories(SnakeLibModule PUBLIC ${CMAKE_SOURCE_DIR})
 
@@ -32,7 +32,10 @@ find_package(GTest REQUIRED)
 set(TEST_FILES 
     test/SerdesRoundtripTest.cpp
     test/ClientIntegrationTest.cpp
+    test/ClientServerIntegrationTest.cpp
 )
+
+enable_testing()
 
 # Add and link test executables
 foreach(TEST_FILE ${TEST_FILES})
@@ -41,8 +44,6 @@ foreach(TEST_FILE ${TEST_FILES})
     target_link_libraries(${TEST_NAME} PRIVATE SnakeLibModule GTest::GTest GTest::Main)
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 endforeach()
-
-enable_testing()
 
 # Enable Clang-Tidy
 find_program(CLANG_TIDY_EXE NAMES clang-tidy)

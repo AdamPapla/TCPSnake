@@ -10,6 +10,7 @@
 #include "GameState.h"
 #include "Messages.h"
 #include "SnakeClient.h"
+#include "SnakeCommon.h"
 #include "SnakeSerdes.h"
 
 namespace {
@@ -105,10 +106,11 @@ class FakeSnakeServer {
          rem = toClient - sent;
       }
 
-      std::vector< uint8_t > accumulator;
+      SessionCommon::Accumulator< uint8_t > accumulator;
       std::array< uint8_t, 2048 > ingressBuff;
-      int readOffset = 0;
-      while ( recvd_ < fromClient_.size() ) {
+      TSQueue< Message::ClientMessage > clientMessages;
+      std::stop_token stop;
+      while ( clientMessages.size() < fromClient_.size() ) {
          auto readBytes =
              ::recv( clientSock_, ingressBuff.data(), ingressBuff.size(), 0 );
          assert( readBytes != -1 && "recv call failed" );
@@ -116,16 +118,9 @@ class FakeSnakeServer {
                              ingressBuff.begin(),
                              ingressBuff.begin() + readBytes );
 
-         std::span< uint8_t > toRead{ accumulator.begin() + readOffset,
-                                      accumulator.end() };
-         Serdes::BytesReader reader( toRead );
-         while ( auto nextMsg = SnakeSerdes::readNextClientMsg( reader ) ) {
-            ASSERT_LE( recvd_, fromClient_.size() );
-            EXPECT_EQ( nextMsg.value(), fromClient_[ recvd_ ] );
-            ++recvd_;
-         }
-         readOffset += accumulator.size() - reader.remainingBytes();
+         SessionCommon::onReceive( accumulator, clientMessages, stop );
       }
+      recvd_ = clientMessages.size();
    }
 
    bool allMessagesReceived() const { return recvd_ == fromClient_.size(); }
