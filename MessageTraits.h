@@ -2,6 +2,7 @@
 #include "BytesOperator.h"
 #include "Messages.h"
 #include "Serializers.h"
+#include "Utility.h"
 
 namespace Message {
 

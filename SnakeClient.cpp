@@ -9,6 +9,7 @@ namespace Network {
 bool
 SnakeClient::connect( std::string_view serverAddr, std::uint16_t port ) {
    sock_ = socket( AF_INET, SOCK_STREAM, 0 );
+   LOG( "Connecting to server on addr {}, port {}", serverAddr, port );
 
    sockaddr_in server{};
    server.sin_family = AF_INET;
@@ -27,10 +28,12 @@ SnakeClient::doNetworkLoop() {
 
 void
 SnakeClient::recvLoop() {
+   LOG( "Starting receive loop on client listening to socket {}", sock_ );
    while ( !stop_.stop_requested() ) {
       auto readBytes = ::recv( sock_, ingressBuff_.data(), ingressBuff_.size(), 0 );
       // TODO: Add proper error handling here
       assert( readBytes != -1 && "recv call failed" );
+      LOG( "Received {} bytes on client", readBytes );
       if ( readBytes > 0 ) {
          accumulator_.insert( accumulator_.end(),
                               ingressBuff_.begin(),
@@ -56,6 +59,7 @@ SnakeClient::dispatchOutgoing() {
       return;
    }
    auto sentBytes = ::send( sock_, toSend.data(), toSend.size(), 0 );
+   LOG( "Sent {} bytes from client", sentBytes );
    assert( sentBytes != -1 && "send call failed" );
    sendOffset_ += sentBytes;
    // TODO: Again - ring buffers make this clean. This is just a stop-gap

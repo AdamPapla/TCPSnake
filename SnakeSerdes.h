@@ -14,6 +14,7 @@ readNext( Serdes::BytesReader & reader ) {
       return std::nullopt;
    }
    auto msgType = reader.peek< typename MessageTraits< Message >::Type >();
+   LOG( "Reading message type {}", (int)msgType );
    return MessageTraits< Message >::read( msgType, reader );
 }
 
